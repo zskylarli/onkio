@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+internal/
+test/fixtures/
+
+# Build output
+dist/
+dist-*/
+
+# Test fixtures - large personal library files
+test/fixtures/apple_library.xml
+test/fixtures/Library.xml
+test/fixtures/skylar_songs.xml
+test/fixtures/*.m4a
+test/fixtures/getsongbpm-results*.json
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+
+# Test/analysis artifacts
+scripts/figures/
+scripts/figures/*.png
+
+# Temporary debug artifacts
+.cursor/debug-*.log

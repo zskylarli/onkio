@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Onkio</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <button id="sidebar-toggle" class="icon-btn" title="Hide panel  [" aria-label="Toggle panel" aria-expanded="true" aria-controls="sidebar">☰</button>
+        <h1>Onkio</h1>
+        <nav id="tabs">
+          <button data-tab="map" class="active">Map</button>
+          <button data-tab="set">Set Builder</button>
+          <button data-tab="taste">Taste</button>
+        </nav>
+        <button id="theme-toggle" class="icon-btn" title="Switch theme" aria-label="Switch theme">☀</button>
+      </header>
+
+      <aside id="sidebar">
+        <section id="import-section">
+          <div class="section-head">
+            <h2>Library</h2>
+            <span class="info-tip">
+              <button type="button" class="info-btn" aria-label="About Library import" title="About Library import">ⓘ</button>
+              <span class="info-popup" role="tooltip">
+                A <strong>rekordbox</strong> collection export is the best input.
+                It already carries BPM and key analysis. In rekordbox:
+                <em>File → Export Collection in xml format</em>. An Apple Music
+                <code>Library.xml</code> also works, but carries no BPM or key.
+                <span class="info-popup-block">Several files can be loaded at once. They are laid out in one shared space, and each keeps its own colour and its own coverage, so a crate that already has BPM and key is never confused with one that needs looking up.</span>
+              </span>
+            </span>
+          </div>
+          <label class="file-drop" id="file-drop">
+            <input type="file" id="file-input" accept=".xml" multiple />
+            <span>Drop collection XML files here or click to choose</span>
+          </label>
+          <fieldset id="import-mode" hidden>
+            <legend class="muted small">Files you add next will</legend>
+            <label class="radio">
+              <input type="radio" name="import-mode" value="add" checked />
+              <span>join what is already loaded</span>
+            </label>
+            <label class="radio">
+              <input type="radio" name="import-mode" value="replace" />
+              <span>replace what is loaded</span>
+            </label>
+          </fieldset>
+          <div id="collection-list" hidden></div>
+          <div id="import-status" class="muted"></div>
+          <div id="import-undo" hidden>
+            <button id="undo-import" class="link-btn">Undo the last import</button>
+          </div>
+        </section>
+
+        <section id="local-section" hidden>
+          <div class="section-head">
+            <h2>Music folder</h2>
+            <span class="info-tip">
+              <button type="button" class="info-btn" aria-label="About the music folder" title="About the music folder">ⓘ</button>
+              <span class="info-popup" role="tooltip">
+                Point Onkio at the folder holding the audio and tracks play from
+                the files themselves instead of from a 30-second preview. That
+                covers personal edits, remixes and unreleased bounces, which no
+                catalogue carries a preview for.
+                <span class="info-popup-block">Files are matched automatically against the paths already recorded in the collection export, so there is nothing to attach track by track. A folder moved to another machine still matches, because the end of each path is what gets compared.</span>
+                <span class="info-popup-block">Nothing is uploaded, copied or changed. The folder is read inside the browser only, and it is remembered between visits, though each new visit needs one click to grant reading again.</span>
+                <span class="info-popup-block">Needs a Chromium browser: Chrome, Edge, Brave, Arc or Opera. Firefox and Safari have no way to grant a folder, and previews stay the only source of audio there.</span>
+              </span>
+            </span>
+          </div>
+          <button id="local-pick">Choose music folder</button>
+          <div id="local-status" class="muted small"></div>
+          <button id="local-forget" class="link-btn" hidden>Forget this folder</button>
+        </section>
+
+        <section id="map-controls" hidden>
+          <h2>Map</h2>
+          <label>
+            Color by
+            <select id="color-mode">
+              <option value="cluster">Cluster</option>
+              <option value="collection">Collection</option>
+              <option value="bpm">BPM</option>
+              <option value="key">Key</option>
+              <option value="year">Year</option>
+            </select>
+          </label>
+          <label>
+            <span>Mixability ⟷ Taste</span>
+            <input type="range" id="semantic-slider" min="0" max="100" value="50" />
+          </label>
+          <label>
+            Find a track
+            <input type="search" id="track-search" placeholder="Title or artist" autocomplete="off" spellcheck="false" />
+          </label>
+          <div id="search-results" hidden></div>
+          <label>
+            Highlight playlist
+            <select id="playlist-filter">
+              <option value="">— none —</option>
+            </select>
+          </label>
+          <div id="highlight-status" class="muted small"></div>
+          <div id="embed-status" class="muted"></div>
+        </section>
+
+        <section id="sound-section" hidden>
+          <div class="section-head">
+            <h2>Sound</h2>
+            <span class="info-tip">
+              <button type="button" class="info-btn" aria-label="About sound analysis" title="About sound analysis">ⓘ</button>
+              <span class="info-popup" role="tooltip">
+                Listens to each track and measures how it actually sounds
+                (brightness, texture, how percussive it is) so the map can be
+                built from the audio instead of from how tracks are filed.
+                With a music folder connected it listens to the files
+                themselves, which reaches the personal edits and bounces that
+                have no preview. Without one it falls back to 30-second
+                previews, and those exist for catalogue tracks only, roughly
+                two thirds of a typical DJ crate. Tracks that could not be
+                heard are drawn as <strong>hollow rings</strong> and stay
+                positioned by metadata, so the map does not pretend to know how
+                they sound.
+                <span class="info-popup-block">A file is sampled for the same 30 seconds a preview would give, taken from a third of the way in. Measuring whole tracks alongside short previews would sort the map by which tracks had files rather than by how they sound.</span>
+              </span>
+            </span>
+          </div>
+          <button id="sound-analyze">Analyze sound in view</button>
+          <div id="sound-status" class="muted"></div>
+
+          <div class="details-head">
+            <details id="sound-advanced">
+              <summary>Sound influence (advanced)</summary>
+              <label>
+                <span>Sound influence on the map</span>
+                <input type="range" id="timbre-slider" min="0" max="100" value="0" disabled />
+              </label>
+              <div id="timbre-note" class="muted small"></div>
+            </details>
+            <span class="info-tip">
+              <button type="button" class="info-btn" aria-label="About sound influence" title="About sound influence">ⓘ</button>
+              <span class="info-popup" role="tooltip">
+                Sets how much the measured audio counts when the map is laid
+                out, against BPM, key, genre and playlist company. At zero the
+                layout ignores sound entirely. Only tracks that have been
+                analyzed can move, so run the analysis first. Changing this
+                rebuilds the whole map.
+              </span>
+            </span>
+          </div>
+        </section>
+
+        <section id="enrich-section" hidden>
+          <h2>Coverage</h2>
+          <div id="coverage"></div>
+
+          <div class="details-head">
+            <details id="online-lookups">
+              <summary>Online lookups (advanced)</summary>
+
+              <div id="enrich-scope" class="muted small"></div>
+              <button id="enrich-toggle">Start lookups</button>
+              <div id="enrich-status" class="muted">idle</div>
+
+              <button id="dsp-start">Analyze what's in view</button>
+              <div id="dsp-status" class="muted"></div>
+
+              <details id="diagnostics">
+                <summary>Diagnostics</summary>
+                <div id="source-stats" class="small muted"></div>
+                <button id="retry-misses">Retry failed lookups</button>
+              </details>
+
+              <div class="details-head nested">
+                <details>
+                  <summary>GetSongBPM (optional key)</summary>
+                  <input type="password" id="gsb-key" placeholder="API key" />
+                  <input type="url" id="gsb-proxy" placeholder="Optional proxy URL" />
+                  <p class="muted small">
+                    BPM &amp; key data from
+                    <a href="https://getsongbpm.com" target="_blank" rel="noopener">GetSongBPM</a>
+                  </p>
+                </details>
+                <span class="info-tip">
+                  <button type="button" class="info-btn" aria-label="About GetSongBPM" title="About GetSongBPM">ⓘ</button>
+                  <span class="info-popup" role="tooltip">
+                    GetSongBPM is the only source of musical key that does not require
+                    analyzing audio. Add a free API key to switch it on. The browser reads
+                    the API directly, so no proxy is needed. The proxy field is a fallback
+                    in case that stops working. Leave both blank to skip.
+                    <span class="info-popup-block">Measured on 1,000 tracks of an Apple Music library: 31% came back with both BPM and key, at about a second and a half each. Matches found on title alone are the unreliable tail and are rejected.</span>
+                  </span>
+                </span>
+              </div>
+            </details>
+            <span class="info-tip">
+              <button type="button" class="info-btn" aria-label="About online lookups" title="About online lookups">ⓘ</button>
+              <span class="info-popup" role="tooltip">
+                Best-effort only, and aimed at the tracks that need it: a
+                collection that already carries BPM and key is skipped entirely,
+                so lookups are never spent re-learning what a rekordbox export
+                already knows.
+                <span class="info-popup-block"><strong>Deezer:</strong> BPM where available, plus a 30s preview for nearly everything.</span>
+                <span class="info-popup-block"><strong>Browser analysis:</strong> estimates key and BPM from previews. Pan the map and run again to expand.</span>
+                <span class="info-popup-block">Expect roughly a third of a catalogue library to resolve, at about two seconds each. A rekordbox export remains the only reliable way to fill these in.</span>
+              </span>
+            </span>
+          </div>
+        </section>
+      </aside>
+
+      <main>
+        <div id="view-map" class="view active">
+          <canvas id="scatter-canvas"></canvas>
+
+          <div id="map-toolbar">
+            <span id="browse-note" hidden>Click the map once to allow audio</span>
+            <button id="gaps-toggle" aria-pressed="false" title="Show gaps — pairs of clusters with almost nothing between them">Gaps</button>
+            <button id="zoom-out" title="Zoom out  −">−</button>
+            <button id="zoom-in" title="Zoom in  +">+</button>
+            <button id="reset-view" title="Reset the view">Reset</button>
+            <button id="legend-toggle" aria-pressed="false" title="Show or hide the legend">Legend</button>
+            <button id="browse-toggle" aria-pressed="false" title="Browsing mode — rest the pointer on a dot to hear it, without clicking">Browsing</button>
+          </div>
+
+          <div id="legend" hidden>
+            <div id="legend-title"></div>
+            <div id="legend-items"></div>
+          </div>
+
+          <div id="tooltip" hidden></div>
+          <div id="track-popover" class="popover" hidden></div>
+          <div id="gap-popover" class="popover" hidden></div>
+        </div>
+
+        <div id="view-set" class="view">
+          <div class="set-head">
+            <h2>Set Builder</h2>
+            <p class="muted">
+              Click tracks on the map to append. Suggestion mode highlights
+              valid next tracks. Warnings, never blocks.
+            </p>
+            <label><input type="checkbox" id="suggest-toggle" /> Suggestion mode</label>
+            <canvas id="sparkline" width="560" height="60"></canvas>
+            <div class="set-actions">
+              <button id="export-m3u8">Export M3U8</button>
+              <button id="export-text">Copy tracklist</button>
+              <button id="set-clear">Clear</button>
+            </div>
+          </div>
+          <ol id="set-list"></ol>
+        </div>
+
+        <div id="view-taste" class="view"><div id="taste-body"></div></div>
+      </main>
+
+      <footer>
+        <span class="muted small">
+          BPM and key come from your rekordbox export where you have one.
+          Optional online sources: Deezer, iTunes Search, and BPM &amp; key data from
+          <a href="https://getsongbpm.com" target="_blank" rel="noopener">GetSongBPM</a>.
+          Values marked "dsp" are estimated in-browser, from your own files when
+          a music folder is connected and from 30s previews otherwise.
+        </span>
+      </footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
