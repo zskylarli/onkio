@@ -66,6 +66,11 @@ import {
   uniqueCollectionId,
 } from "./collections/merge";
 import {
+  downsampleLibrary,
+  needsDownsampleOffer,
+  samplePresets,
+} from "./collections/downsample";
+import {
   collectionCoverage,
   describeLabelInfluence,
   describeOutstanding,
@@ -322,7 +327,62 @@ async function importFile(file: File, mode: "add" | "replace"): Promise<void> {
   const parsed =
     format === "rekordbox" ? await parseRekordboxFile(file) : await parseAppleFile(file);
   if (!parsed) return;
-  await adoptImport(parsed.library, file.name, format, parsed.detail, mode);
+
+  let incoming = parsed.library;
+  let detail = parsed.detail;
+  let sampledFrom: number | undefined;
+  const full = incoming.tracks.length;
+  if (needsDownsampleOffer(full)) {
+    const size = await offerDownsample(file.name, full);
+    if (size !== null) {
+      incoming = downsampleLibrary(incoming, size);
+      sampledFrom = full;
+      detail =
+        `${incoming.tracks.length.toLocaleString()} tracks sampled at random from ` +
+        `${full.toLocaleString()}, ${incoming.playlists.length} playlists`;
+    }
+  }
+  await adoptImport(incoming, file.name, format, detail, mode, sampledFrom);
+}
+
+/**
+ * Offer a sample, and resolve with the size chosen or null to keep everything.
+ *
+ * The offer has to block the import rather than arrive after it: sampling a
+ * library that has already been embedded and analyzed would throw away the very
+ * work the sample exists to avoid. importFiles awaits each file in turn, so a
+ * multi-file drop asks once per oversized file.
+ */
+function offerDownsample(fileName: string, trackCount: number): Promise<number | null> {
+  const prompt = $("downsample-prompt");
+  const choices = $("downsample-choices");
+  $("downsample-note").textContent =
+    `${fileName} holds ${trackCount.toLocaleString()} tracks. Analysis runs at ` +
+    "about two seconds a track, so a random sample reaches a map with sound, " +
+    "labels and previews far sooner.";
+  choices.innerHTML = "";
+  prompt.hidden = false;
+
+  return new Promise((resolve) => {
+    const answer = (size: number | null): void => {
+      prompt.hidden = true;
+      choices.innerHTML = "";
+      resolve(size);
+    };
+    for (const size of samplePresets(trackCount)) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = `Sample ${size.toLocaleString()} tracks`;
+      btn.addEventListener("click", () => answer(size));
+      choices.appendChild(btn);
+    }
+    const all = document.createElement("button");
+    all.type = "button";
+    all.className = "link-btn";
+    all.textContent = `Keep all ${trackCount.toLocaleString()}`;
+    all.addEventListener("click", () => answer(null));
+    choices.appendChild(all);
+  });
 }
 
 function parseRekordboxFile(
@@ -404,7 +464,8 @@ async function adoptImport(
   fileName: string,
   format: "rekordbox" | "apple",
   detail: string,
-  mode: "add" | "replace"
+  mode: "add" | "replace",
+  sampledFrom?: number
 ): Promise<void> {
   const status = $("import-status");
   const adding = library !== null && mode === "add";
@@ -415,6 +476,7 @@ async function adoptImport(
     format,
     trackCount: incoming.tracks.length,
     addedAt: new Date().toISOString(),
+    ...(sampledFrom === undefined ? {} : { sampledFrom }),
   };
   const tagged = tagCollection(incoming, meta);
 
@@ -1302,7 +1364,11 @@ function renderCollections(): void {
       (c, i) => `<div class="coll-row">
         ${collectionSwatch(i)}
         <span class="coll-name" title="${esc(c.label)}">${esc(c.label)}</span>
-        <span class="muted small">${c.format} · ${c.trackCount.toLocaleString()}</span>
+        <span class="muted small">${c.format} · ${
+          c.sampledFrom
+            ? `${c.trackCount.toLocaleString()} of ${c.sampledFrom.toLocaleString()} sampled`
+            : c.trackCount.toLocaleString()
+        }</span>
         ${cols.length > 1 ? `<button class="link-btn" data-remove="${esc(c.id)}" title="Remove this collection">remove</button>` : ""}
       </div>`
     )

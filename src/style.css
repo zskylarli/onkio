@@ -284,6 +284,19 @@ header h1 {
 #source-stats { margin: 6px 0; font-variant-numeric: tabular-nums; }
 #enrich-section input[type="url"] { width: 100%; margin-top: 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; }
 
+/* A question, so it reads as one: accent-bordered rather than muted, and the
+   choices sit on one row so the sizes can be compared at a glance. */
+#downsample-prompt {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+#downsample-note { margin: 0 0 6px; }
+#downsample-choices { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+#sidebar #downsample-choices button { width: auto; margin: 0; padding: 5px 9px; font-size: 12px; }
+
 .file-drop {
   display: block;
   border: 1px dashed var(--border);

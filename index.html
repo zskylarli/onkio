@@ -63,6 +63,12 @@
             </label>
           </fieldset>
           <div id="collection-list" hidden></div>
+          <!-- Only ever on screen while an import is waiting on the answer:
+               filled and cleared by offerDownsample in src/main.ts. -->
+          <div id="downsample-prompt" role="group" aria-labelledby="downsample-note" hidden>
+            <p id="downsample-note" class="small"></p>
+            <div id="downsample-choices"></div>
+          </div>
           <div id="import-status" class="muted small"></div>
           <div id="import-undo" hidden>
             <button id="undo-import" class="link-btn">Undo the last import</button>

@@ -45,6 +45,8 @@ export type CollectionMeta = {
   trackCount: number;
   /** ISO timestamp of the import */
   addedAt: string;
+  /** Set only when the import was sampled: how many tracks the file held. */
+  sampledFrom?: number;
 };
 
 export type Playlist = {

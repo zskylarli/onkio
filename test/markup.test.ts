@@ -50,6 +50,32 @@ describe("document head", () => {
   });
 });
 
+describe("downsample offer", () => {
+  it("ships hidden, since it only appears while an import waits on an answer", () => {
+    expect(HTML).toContain('<div id="downsample-prompt" role="group"');
+    expect(HTML).toMatch(/id="downsample-prompt"[^>]*hidden/);
+  });
+
+  it("keeps the note and the choice row main.ts fills by id", () => {
+    for (const id of ["downsample-note", "downsample-choices"]) {
+      expect(occurrences(`id="${id}"`)).toBe(1);
+    }
+    // The question names the group for a reader who cannot see the border.
+    expect(HTML).toMatch(/id="downsample-prompt"[^>]*aria-labelledby="downsample-note"/);
+  });
+
+  it("sits in the library section, where the import it interrupts lives", () => {
+    const start = HTML.indexOf('<section id="library-section"') >= 0
+      ? HTML.indexOf('<section id="library-section"')
+      : HTML.indexOf("<h2>Library</h2>");
+    expect(start).toBeGreaterThan(-1);
+    expect(HTML.indexOf('id="downsample-prompt"')).toBeGreaterThan(start);
+    expect(HTML.indexOf('id="downsample-prompt"')).toBeLessThan(
+      HTML.indexOf('id="import-status"')
+    );
+  });
+});
+
 describe("sound section", () => {
   const advanced = block('<details id="sound-advanced">');
 
