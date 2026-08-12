@@ -1,7 +1,7 @@
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
-  base: "./",
+  base: "/onkio/",
   build: { target: "es2022" },
   worker: { format: "es" },
   test: {
