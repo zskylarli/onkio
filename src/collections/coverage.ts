@@ -24,6 +24,8 @@ export type CollectionCoverage = {
   total: number;
   bpm: number;
   key: number;
+  /** tracks with a canonical record label */
+  labelCount: number;
   /** tracks with a timbral fingerprint measured from audio */
   sound: number;
   preview: number;
@@ -53,6 +55,7 @@ function emptyRow(meta: CollectionMeta): CollectionCoverage {
     total: 0,
     bpm: 0,
     key: 0,
+    labelCount: 0,
     sound: 0,
     preview: 0,
     local: 0,
@@ -97,6 +100,7 @@ export function collectionCoverage(
     row.total++;
     if (t.bpm) row.bpm++;
     if (t.key) row.key++;
+    if (t.label) row.labelCount++;
     if (t.timbre) row.sound++;
     if (t.previewUrl) row.preview++;
     if (localPids?.has(t.pid)) row.local++;
@@ -130,7 +134,7 @@ export function describeSoundInfluence(rows: CollectionCoverage[]): {
       enabled: false,
       note:
         "No track has been listened to yet, so there is no sound to weigh and " +
-        "this can change nothing. Run 'Analyze sound in view' first.",
+        "this can change nothing. Run 'Analyze songs' first.",
     };
   }
   return {
@@ -138,6 +142,28 @@ export function describeSoundInfluence(rows: CollectionCoverage[]): {
     note:
       `${analyzed.toLocaleString()} of ${total.toLocaleString()} tracks have been ` +
       "listened to; only those move when this changes.",
+  };
+}
+
+export function describeLabelInfluence(rows: CollectionCoverage[]): {
+  enabled: boolean;
+  note: string;
+} {
+  const labelled = rows.reduce((n, r) => n + r.labelCount, 0);
+  const total = rows.reduce((n, r) => n + r.total, 0);
+  if (labelled === 0) {
+    return {
+      enabled: false,
+      note:
+        "No track has a known label yet, so there is no label signal to weigh. " +
+        "Run 'Analyze songs' to look them up.",
+    };
+  }
+  return {
+    enabled: true,
+    note:
+      `${labelled.toLocaleString()} of ${total.toLocaleString()} tracks have a known label; ` +
+      "only those move when this changes.",
   };
 }
 

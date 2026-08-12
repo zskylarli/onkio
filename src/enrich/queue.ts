@@ -23,6 +23,7 @@ export class EnrichmentQueue {
   private tracks = new Map<string, Track>();
   private running = false;
   private stopped = false;
+  private generation = 0;
   private visible = new Set<string>();
   private focused = new Set<string>();
   private persistCounter = 0;
@@ -80,6 +81,7 @@ export class EnrichmentQueue {
     if (this.running) return;
     this.running = true;
     this.stopped = false;
+    const generation = ++this.generation;
     while (!this.stopped && this.pending.length > 0) {
       const pid = this.pending.shift()!;
       this.inQueue.delete(pid);
@@ -87,6 +89,14 @@ export class EnrichmentQueue {
       if (!track) continue;
       try {
         const res = await lookupFeatures(track.artist, track.name);
+        // A lookup source may not expose an abort signal. If Stop was pressed
+        // while it was in flight, put the track back without applying its
+        // answer so a later analysis pass can resume it cleanly.
+        if (this.stopped || generation !== this.generation) {
+          this.pending.unshift(pid);
+          this.inQueue.add(pid);
+          break;
+        }
         if (res) {
           let changed = false;
           // Manual overrides always win (§4 stage 3) — enrichment never
@@ -109,8 +119,24 @@ export class EnrichmentQueue {
             track.source = { ...track.source, key: res.source };
             changed = true;
           }
+          if (res.label && !track.label) {
+            track.label = res.label;
+            track.source = {
+              ...track.source,
+              label: res.labelSource ?? res.source ?? "deezer",
+            };
+            changed = true;
+          }
           if (res.previewUrl && !track.previewUrl) {
             track.previewUrl = res.previewUrl;
+            changed = true;
+          }
+          // The URL is a credential with about fifteen minutes to live; the id
+          // is what a fresh one is minted from (enrich/preview). Keeping the
+          // one and dropping the other saved every enriched track with a dead
+          // address and no way back to the audio short of searching again.
+          if (res.deezerId !== undefined && track.deezerId === undefined) {
+            track.deezerId = res.deezerId;
             changed = true;
           }
           if (res.tags?.length) {
@@ -120,6 +146,11 @@ export class EnrichmentQueue {
           if (changed) this.onUpdate(track);
         }
       } catch {
+        if (this.stopped || generation !== this.generation) {
+          this.pending.unshift(pid);
+          this.inQueue.add(pid);
+          break;
+        }
         // Contained failure; move on.
       }
       this.onProgress?.(this.pending.length);
@@ -131,6 +162,7 @@ export class EnrichmentQueue {
 
   stop(): void {
     this.stopped = true;
+    this.generation++;
   }
 
   private async persist(): Promise<void> {

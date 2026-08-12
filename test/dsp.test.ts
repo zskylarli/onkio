@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   bpmOutOfRange,
   estimateTempo,
@@ -7,7 +7,8 @@ import {
 } from "../src/dsp/tempo";
 import { estimateKey } from "../src/dsp/key";
 import { fft } from "../src/dsp/fft";
-import { EXCERPT_SECONDS, excerptRange } from "../src/dsp/pool";
+import { DspPool, EXCERPT_SECONDS, excerptRange } from "../src/dsp/pool";
+import type { Track } from "../src/types";
 
 const SR = 22050;
 
@@ -156,5 +157,73 @@ describe("excerptRange", () => {
     expect(excerptRange(0, RATE)).toEqual({ start: 0, length: 0 });
     expect(excerptRange(1000, 0)).toEqual({ start: 0, length: 1000 });
     expect(excerptRange(-5, RATE)).toEqual({ start: 0, length: 0 });
+  });
+});
+
+describe("DspPool cancellation", () => {
+  it("aborts active decoding work and resolves without a result", async () => {
+    const workers: Array<{
+      postMessage: ReturnType<typeof vi.fn>;
+      terminate: ReturnType<typeof vi.fn>;
+      onmessage: ((event: MessageEvent) => void) | null;
+    }> = [];
+    class FakeWorker {
+      postMessage = vi.fn();
+      terminate = vi.fn();
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      constructor() {
+        workers.push(this);
+      }
+    }
+    class FakeAudioContext {
+      async decodeAudioData(): Promise<{
+        length: number;
+        sampleRate: number;
+        numberOfChannels: number;
+        getChannelData: () => Float32Array;
+      }> {
+        return {
+          length: 1,
+          sampleRate: 1,
+          numberOfChannels: 1,
+          getChannelData: () => new Float32Array([0]),
+        };
+      }
+    }
+    vi.stubGlobal("Worker", FakeWorker);
+    vi.stubGlobal("AudioContext", FakeAudioContext);
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      arrayBuffer: async () => new ArrayBuffer(8),
+    })));
+
+    try {
+      const controller = new AbortController();
+      const pool = new DspPool();
+      const track: Track = {
+        pid: "p1",
+        trackId: 1,
+        name: "Track",
+        durationMs: 180_000,
+        playlists: [],
+      };
+      const result = pool.analyze(
+        track,
+        { url: "https://example.test/audio", kind: "preview" },
+        controller.signal
+      );
+      await vi.waitFor(() => {
+        expect(workers.some((worker) => worker.postMessage.mock.calls.length > 0)).toBe(true);
+      });
+      const active = workers.find((worker) => worker.postMessage.mock.calls.length > 0)!;
+
+      controller.abort();
+
+      await expect(result).resolves.toBeNull();
+      expect(active.terminate).toHaveBeenCalledOnce();
+      pool.destroy();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

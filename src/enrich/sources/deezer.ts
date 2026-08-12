@@ -3,6 +3,7 @@ import { RateLimiter } from "./limiter";
 import { normalizeArtist, normalizeTitle } from "../normalize";
 import { pickBest } from "../match";
 import type { FeatureLookup } from "../../types";
+import { canonicalLabel } from "../label";
 
 /**
  * Deezer public API (§4 stage 1). No auth, no CORS headers → JSONP.
@@ -32,9 +33,39 @@ type DeezerResult = {
   title?: string;
   preview?: string;
   artist?: { name?: string };
+  album?: { id?: number };
 };
 type DeezerSearch = { data?: DeezerResult[] };
 type DeezerTrack = { bpm?: number };
+type DeezerAlbum = { label?: string };
+
+const albumLabels = new Map<number, Promise<string | undefined>>();
+
+async function albumLabel(id: number, artist?: string): Promise<string | undefined> {
+  let pending = albumLabels.get(id);
+  if (!pending) {
+    pending = (async () => {
+      try {
+        await limiter.acquire();
+        const album = await jsonp<DeezerAlbum>(
+          `https://api.deezer.com/album/${id}?output=jsonp`
+        );
+        return canonicalLabel(album.label, artist);
+      } catch {
+        // Album metadata is additive. An outage must not discard the preview,
+        // BPM and durable track id already obtained from this matched result.
+        return undefined;
+      }
+    })();
+    albumLabels.set(id, pending);
+  }
+  return pending;
+}
+
+/** Test isolation; production keeps the cache for the lifetime of the tab. */
+export function clearDeezerAlbumCache(): void {
+  albumLabels.clear();
+}
 
 export async function lookupDeezer(
   artist: string | undefined,
@@ -71,5 +102,11 @@ export async function lookupDeezer(
     out.confidence = { bpm: 0.9 };
   }
 
-  return out.bpm || out.previewUrl ? out : null;
+  const albumId = best.item.album?.id;
+  if (albumId !== undefined) {
+    out.label = await albumLabel(albumId, artist);
+    if (out.label) out.labelSource = "deezer";
+  }
+
+  return out.bpm || out.previewUrl || out.label ? out : null;
 }

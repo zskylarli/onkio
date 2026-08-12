@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   bpmDeltaPct,
   evaluateTransition,
+  moveItem,
+  orderForSet,
   suggestNext,
   toM3U8,
   toTextTracklist,
@@ -89,6 +91,76 @@ describe("suggestNext", () => {
     expect(pids).not.toContain("fast");
     expect(pids).not.toContain("nodata");
     expect(pids).not.toContain("cur");
+  });
+});
+
+describe("moveItem", () => {
+  const list = ["a", "b", "c", "d"];
+
+  it("counts the destination in the finished list, not the original", () => {
+    // Dragging the first row to the end means it ends up last, whatever index
+    // the rows below it held before it was lifted out.
+    expect(moveItem(list, 0, 3)).toEqual(["b", "c", "d", "a"]);
+    expect(moveItem(list, 3, 0)).toEqual(["d", "a", "b", "c"]);
+    expect(moveItem(list, 1, 2)).toEqual(["a", "c", "b", "d"]);
+  });
+
+  it("leaves the list alone when nothing moves", () => {
+    expect(moveItem(list, 2, 2)).toEqual(list);
+    expect(moveItem(list, 9, 0)).toEqual(list);
+    expect(moveItem(list, -1, 0)).toEqual(list);
+  });
+
+  it("clamps a destination past either end", () => {
+    expect(moveItem(list, 0, 99)).toEqual(["b", "c", "d", "a"]);
+    expect(moveItem(list, 3, -5)).toEqual(["d", "a", "b", "c"]);
+  });
+
+  it("copies rather than reordering in place", () => {
+    const original = [...list];
+    moveItem(list, 0, 2);
+    expect(list).toEqual(original);
+  });
+});
+
+describe("orderForSet", () => {
+  it("ramps a lassoed region from slowest to fastest", () => {
+    const ordered = orderForSet([
+      t("fast", { bpm: 132 }),
+      t("slow", { bpm: 118 }),
+      t("mid", { bpm: 126 }),
+    ]);
+    expect(ordered.map((x) => x.pid)).toEqual(["slow", "mid", "fast"]);
+  });
+
+  it("puts tracks with no tempo last, not first", () => {
+    // A missing BPM read as zero would open every set with the tracks nothing is
+    // known about, which is the opposite of useful.
+    const ordered = orderForSet([t("unknown"), t("slow", { bpm: 118 })]);
+    expect(ordered.map((x) => x.pid)).toEqual(["slow", "unknown"]);
+  });
+
+  it("holds the incoming order within one tempo", () => {
+    const ordered = orderForSet([
+      t("second", { bpm: 128 }),
+      t("first", { bpm: 124 }),
+      t("third", { bpm: 128 }),
+      t("nobpm-a"),
+      t("nobpm-b"),
+    ]);
+    expect(ordered.map((x) => x.pid)).toEqual([
+      "first",
+      "second",
+      "third",
+      "nobpm-a",
+      "nobpm-b",
+    ]);
+  });
+
+  it("does not disturb what it was given", () => {
+    const input = [t("b", { bpm: 130 }), t("a", { bpm: 120 })];
+    orderForSet(input);
+    expect(input.map((x) => x.pid)).toEqual(["b", "a"]);
   });
 });
 

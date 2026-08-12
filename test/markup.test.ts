@@ -22,6 +22,26 @@ function block(openTag: string): string {
 
 const occurrences = (needle: string) => HTML.split(needle).length - 1;
 
+/**
+ * The markup of one `<div id="…">` including any divs nested inside it, found by
+ * counting tags rather than by looking for the next `</div>`. Several of the map
+ * overlays now hold a div of their own, and a slice that stopped at the first
+ * close would silently test only the first line of them.
+ */
+function divBlock(id: string): string {
+  const start = HTML.indexOf(`<div id="${id}"`);
+  expect(start).toBeGreaterThan(-1);
+  const tag = /<(\/?)div\b/g;
+  tag.lastIndex = start;
+  let depth = 0;
+  let m: RegExpExecArray | null;
+  while ((m = tag.exec(HTML)) !== null) {
+    depth += m[1] ? -1 : 1;
+    if (depth === 0) return HTML.slice(start, tag.lastIndex);
+  }
+  throw new Error(`unbalanced <div id="${id}">`);
+}
+
 describe("document head", () => {
   it("names an icon, so the page stops asking for one that does not exist", () => {
     // The only console error in the app was a 404 for the /favicon.ico a browser
@@ -32,6 +52,20 @@ describe("document head", () => {
 
 describe("sound section", () => {
   const advanced = block('<details id="sound-advanced">');
+
+  it("presents sound and label weighting as advanced clustering", () => {
+    const start = HTML.indexOf('<section id="sound-section"');
+    const section = HTML.slice(start, HTML.indexOf("</section>", start));
+    expect(section).toContain("<h2>Advanced clustering</h2>");
+    expect(section).not.toContain('aria-label="About sound analysis"');
+    expect(section).toContain("<summary>Sound influence</summary>");
+    expect(section).toContain("<summary>Label influence</summary>");
+    expect(section).toContain(
+      "Listens to each track and measures how it actually sounds"
+    );
+    expect(section).not.toContain("Sound influence (advanced)");
+    expect(section).not.toContain("Label influence (advanced)");
+  });
 
   it("keeps the timbre slider in the document under the advanced toggle", () => {
     // A collapsed <details> keeps its children, so runEmbedding can still read
@@ -50,15 +84,71 @@ describe("sound section", () => {
     expect(advanced).toContain('id="timbre-note"');
   });
 
-  it("leaves analysis itself out in the open", () => {
+  it("leaves analysis to the single Analysis control", () => {
     expect(advanced).not.toContain('id="sound-analyze"');
-    expect(advanced).not.toContain('id="sound-status"');
-    expect(occurrences('id="sound-analyze"')).toBe(1);
+    expect(occurrences('id="sound-analyze"')).toBe(0);
+    expect(occurrences('id="sound-status"')).toBe(0);
   });
 
   it("starts collapsed", () => {
     expect(HTML).toContain('<details id="sound-advanced">');
     expect(HTML).not.toContain('<details id="sound-advanced" open');
+  });
+});
+
+describe("label influence", () => {
+  const advanced = block('<details id="label-advanced">');
+
+  it("ships one collapsed influence slider at the measured default", () => {
+    expect(occurrences('id="label-slider"')).toBe(1);
+    expect(advanced).toMatch(/id="label-slider"[^>]*value="75"[^>]*disabled/);
+    expect(HTML).not.toContain('<details id="label-advanced" open');
+  });
+
+  it("has a coverage note and an explanatory info tip", () => {
+    expect(advanced).toContain('id="label-note"');
+    expect(HTML).toContain('aria-label="About label influence"');
+    expect(HTML).toContain("tracks with no known label get no label signal");
+  });
+});
+
+describe("demo collection button", () => {
+  const importSection = HTML.slice(
+    HTML.indexOf('<section id="import-section">'),
+    HTML.indexOf("</section>", HTML.indexOf('<section id="import-section">'))
+  );
+
+  it("offers the bundled demo in the import section, where a missing file is felt", () => {
+    expect(occurrences('id="demo-load"')).toBe(1);
+    expect(occurrences('id="demo-load-label"')).toBe(1);
+    expect(importSection).toContain('id="demo-load"');
+    expect(importSection).toContain("No file? Load the demo collection");
+  });
+
+  it("sits outside the drop label, so clicking it cannot open the file picker", () => {
+    // #file-drop is a <label> wrapping #file-input: the browser forwards a
+    // click on anything inside it to that input, which would pop the OS file
+    // dialog on top of loading the demo.
+    const label = HTML.slice(
+      HTML.indexOf('<label class="file-drop"'),
+      HTML.indexOf("</label>", HTML.indexOf('<label class="file-drop"'))
+    );
+    expect(label).not.toContain('id="demo-load"');
+    // Still adjacent: between the drop box and the add/replace choice.
+    expect(importSection.indexOf('id="file-drop"')).toBeLessThan(
+      importSection.indexOf('id="demo-load"')
+    );
+    expect(importSection.indexOf('id="demo-load"')).toBeLessThan(
+      importSection.indexOf('id="import-mode"')
+    );
+  });
+
+  it("is a real button with a readable name rather than a clickable span", () => {
+    // Keyboard reach and the accessible name both come from being a <button>;
+    // main.ts swaps the label text while the fetch runs, so the busy state is
+    // announced rather than being only a greyed-out colour.
+    expect(importSection).toMatch(/<button type="button" id="demo-load"/);
+    expect(importSection).toMatch(/<span class="demo-icon" aria-hidden="true">/);
   });
 });
 
@@ -108,25 +198,69 @@ describe("info tooltips", () => {
 });
 
 describe("map controls", () => {
-  it("carries the search field, its results and the highlight readout", () => {
-    expect(occurrences('id="track-search"')).toBe(1);
-    expect(occurrences('id="search-results"')).toBe(1);
-    expect(occurrences('id="highlight-status"')).toBe(1);
-    expect(occurrences('id="playlist-filter"')).toBe(1);
+  const mapControls = HTML.slice(
+    HTML.indexOf('<section id="map-controls"'),
+    HTML.indexOf("</section>", HTML.indexOf('<section id="map-controls"'))
+  );
+
+  it("carries the controls main.ts reaches for by id, exactly once each", () => {
+    for (const id of [
+      "track-search",
+      "search-results",
+      "color-mode",
+      "playlist-filter",
+      "highlight-status",
+    ]) {
+      expect(occurrences(`id="${id}"`)).toBe(1);
+    }
+  });
+
+  it("has moved color and playlist controls out of the panel", () => {
+    expect(mapControls).not.toContain('id="color-mode"');
+    expect(mapControls).not.toContain('id="playlist-filter"');
+    expect(mapControls).not.toContain('id="highlight-status"');
+  });
+
+  it("has moved the search out of the panel and onto the map", () => {
+    // A browser-style field over the canvas, reachable with the panel collapsed.
+    expect(mapControls).not.toContain('id="track-search"');
+    expect(mapControls).not.toContain('id="search-results"');
+  });
+});
+
+describe("map search", () => {
+  const search = divBlock("map-search");
+
+  it("puts the field and its results together above the canvas", () => {
+    expect(search).toContain('id="track-search"');
+    // A dropdown under the field, so it starts closed rather than empty.
+    expect(search).toMatch(/<div id="search-results" hidden>/);
+    expect(search.indexOf('id="track-search"')).toBeLessThan(
+      search.indexOf('id="search-results"')
+    );
+  });
+
+  it("names itself, since the label it used to carry stayed in the panel", () => {
+    // The placeholder is not an accessible name: it disappears on the first
+    // keystroke and is not read as one.
+    expect(search).toMatch(/id="track-search"[^>]*aria-label="Find a track"/);
+    // The magnifier is decoration beside that name, not a second reading of it.
+    expect(search).toMatch(/<span class="search-icon" aria-hidden="true">/);
   });
 });
 
 describe("map toolbar", () => {
-  const toolbar = HTML.slice(
-    HTML.indexOf('<div id="map-toolbar">'),
-    HTML.indexOf("</div>", HTML.indexOf('<div id="map-toolbar">'))
-  );
+  const toolbar = divBlock("map-toolbar");
 
-  it("keeps the browsing toggle in the toolbar beside the other map controls", () => {
-    expect(occurrences('id="browse-toggle"')).toBe(1);
-    expect(toolbar).toContain('id="browse-toggle"');
-    expect(toolbar).toContain('id="gaps-toggle"');
-    expect(toolbar).toContain('id="legend-toggle"');
+  it("keeps the modes that act on the map, and nothing that is not a mode", () => {
+    for (const id of ["browse-toggle", "gaps-toggle", "lasso-toggle"]) {
+      expect(occurrences(`id="${id}"`)).toBe(1);
+      expect(toolbar).toContain(`id="${id}"`);
+    }
+    // The legend puts itself away and zoom lives at the other corner, so
+    // neither is a button here any more.
+    expect(occurrences('id="legend-toggle"')).toBe(0);
+    expect(toolbar).not.toContain('id="zoom-in"');
   });
 
   it("ships the autoplay note hidden and ahead of the buttons", () => {
@@ -139,27 +273,29 @@ describe("map toolbar", () => {
     );
   });
 
-  it("offers zoom as buttons, not only as a wheel gesture", () => {
-    // Wheel-only zoom is undiscoverable, and a trackpad makes it worse.
-    for (const id of ["zoom-in", "zoom-out"]) {
-      expect(occurrences(`id="${id}"`)).toBe(1);
-      expect(toolbar).toContain(`id="${id}"`);
-    }
-    // The keyboard shortcuts main.ts binds, said out loud in the tooltip.
-    expect(toolbar).toMatch(/id="zoom-in"[^>]*title="[^"]*\+"/);
-    expect(toolbar).toMatch(/id="zoom-out"[^>]*title="[^"]*−"/);
+  it("offers the lasso, and says how to use it on hover rather than on the map", () => {
+    expect(toolbar).toMatch(/id="lasso-toggle"[^>]*title="Draw a circle around tracks"/);
+    // The instruction is a tooltip now; only what a gesture found is shown on
+    // the map, and only while it is recent.
+    expect(occurrences('id="lasso-hint"')).toBe(0);
+    expect(occurrences('id="lasso-feedback"')).toBe(1);
+    expect(toolbar).not.toContain('id="lasso-feedback"');
+    expect(HTML).toMatch(/<div id="lasso-feedback" role="status" aria-live="polite" hidden>/);
+  });
+
+  it("gives the icon-only browsing toggle a name a screen reader can read", () => {
+    // A note glyph is not a name. #theme-toggle and #sidebar-toggle carry both
+    // an aria-label and a title for the same reason.
+    expect(toolbar).toMatch(/id="browse-toggle"[^>]*aria-label="[^"]+"/);
+    expect(toolbar).toMatch(/id="browse-toggle"[^>]*title="[^"]*rest the pointer[^"]*"/);
+    expect(toolbar).not.toContain(">Browsing<");
   });
 
   it("states each toggle's state in the accessibility tree, not only in colour", () => {
     // The accent fill is the only cue otherwise, which is nothing to a screen
     // reader. main.ts keeps these in step through setToggleState.
-    for (const id of ["gaps-toggle", "legend-toggle", "browse-toggle"]) {
+    for (const id of ["gaps-toggle", "browse-toggle", "lasso-toggle"]) {
       expect(toolbar).toMatch(new RegExp(`id="${id}"[^>]*aria-pressed="false"`));
-    }
-    // Reset and the zoom steps are actions, not states, and must not claim to
-    // be pressable.
-    for (const id of ["reset-view", "zoom-in", "zoom-out"]) {
-      expect(toolbar).not.toMatch(new RegExp(`id="${id}"[^>]*aria-pressed`));
     }
   });
 
@@ -167,5 +303,155 @@ describe("map toolbar", () => {
     // Default off: playing on every hover is intrusive, and with a music folder
     // connected a hover reads a whole file off disk.
     expect(toolbar).not.toMatch(/id="browse-toggle"[^>]*class="[^"]*\bon\b/);
+  });
+});
+
+describe("map zoom stack", () => {
+  const zoom = divBlock("map-zoom");
+
+  it("offers zoom as buttons, not only as a wheel gesture", () => {
+    // Wheel-only zoom is undiscoverable, and a trackpad makes it worse. The ids
+    // are unchanged because main.ts and the browser scripts bind to them.
+    for (const id of ["zoom-in", "zoom-out", "reset-view"]) {
+      expect(occurrences(`id="${id}"`)).toBe(1);
+      expect(zoom).toContain(`id="${id}"`);
+    }
+    // The keyboard shortcuts main.ts binds, said out loud in the tooltip.
+    expect(zoom).toMatch(/id="zoom-in"[^>]*title="[^"]*\+"/);
+    expect(zoom).toMatch(/id="zoom-out"[^>]*title="[^"]*−"/);
+  });
+
+  it("stacks in reading order: in, out, then reset", () => {
+    expect(zoom.indexOf('id="zoom-in"')).toBeLessThan(zoom.indexOf('id="zoom-out"'));
+    expect(zoom.indexOf('id="zoom-out"')).toBeLessThan(zoom.indexOf('id="reset-view"'));
+  });
+
+  it("names each one, since all three are glyphs rather than words", () => {
+    for (const id of ["zoom-in", "zoom-out", "reset-view"]) {
+      expect(zoom).toMatch(new RegExp(`id="${id}"[^>]*aria-label="[^"]+"`));
+      // These are actions, not states, and must not claim to be pressable.
+      expect(zoom).not.toMatch(new RegExp(`id="${id}"[^>]*aria-pressed`));
+    }
+  });
+});
+
+describe("legend", () => {
+  const legend = divBlock("legend");
+
+  it("carries its own collapse control rather than a toolbar button", () => {
+    expect(occurrences('id="legend-collapse"')).toBe(1);
+    expect(legend).toContain('id="legend-collapse"');
+    expect(legend).toContain('id="legend-body"');
+    expect(occurrences('id="legend-title"')).toBe(1);
+    expect(occurrences('id="legend-items"')).toBe(1);
+  });
+
+  it("keeps map color and playlist highlighting inside the legend", () => {
+    for (const id of ["color-mode", "playlist-filter", "highlight-status"]) {
+      expect(legend).toContain(`id="${id}"`);
+    }
+    expect(legend).toMatch(/id="playlist-filter"[^>]*aria-label="Highlight playlist"/);
+    expect(legend.indexOf('id="playlist-filter"')).toBeLessThan(
+      legend.indexOf('id="highlight-status"')
+    );
+  });
+
+  it("says what it collapses, and whether it is collapsed", () => {
+    // Collapsing to the title bar rather than disappearing is what keeps a way
+    // back; aria-expanded is that state for a reader who cannot see the box.
+    expect(legend).toMatch(/id="legend-collapse"[^>]*aria-expanded="true"/);
+    expect(legend).toMatch(/id="legend-collapse"[^>]*aria-controls="legend-body"/);
+    expect(legend).toMatch(/id="legend-collapse"[^>]*aria-label="[^"]+"/);
+  });
+});
+
+describe("analysis", () => {
+  const sectionStart = HTML.indexOf('<section id="enrich-section"');
+  const section = HTML.slice(
+    sectionStart,
+    HTML.indexOf("</section>", sectionStart)
+  );
+  const lookups = block('<details id="online-lookups">');
+
+  it("names the section Analysis and places the control beside it", () => {
+    expect(section).toContain("<h2>Analysis</h2>");
+    expect(lookups).toContain("<summary>Options</summary>");
+    expect(lookups).not.toContain("Online lookups");
+    expect(occurrences('id="dsp-start"')).toBe(1);
+    expect(section).toContain('class="section-head analysis-head"');
+    expect(section.indexOf('id="dsp-start"')).toBeLessThan(
+      section.indexOf('id="online-lookups"')
+    );
+    expect(section).toContain("Analyze songs");
+    expect(occurrences('id="enrich-toggle"')).toBe(0);
+    expect(occurrences('id="enrich-status"')).toBe(0);
+    expect(section).not.toContain("Start lookups");
+    expect(occurrences('id="sound-analyze"')).toBe(0);
+    expect(section).not.toMatch(/id="dsp-stop"/);
+  });
+
+  it("shows analysis status in the small muted style used elsewhere", () => {
+    expect(occurrences('id="dsp-status"')).toBe(1);
+    expect(section).toMatch(/id="dsp-status" class="muted small"/);
+  });
+
+  it("keeps the analysis explanation short", () => {
+    expect(section).toContain("Best-effort analysis for tracks missing BPM and key information");
+    expect(section).toContain("label-based");
+    expect(section).toContain("clustering");
+    expect(section).not.toContain("Browser analysis");
+  });
+
+  it("appears above advanced clustering", () => {
+    expect(HTML.indexOf('id="enrich-section"')).toBeLessThan(
+      HTML.indexOf('id="sound-section"')
+    );
+  });
+});
+
+describe("set builder panel", () => {
+  const panel = HTML.slice(
+    HTML.indexOf('<aside id="set-panel"'),
+    HTML.indexOf("</aside>", HTML.indexOf('<aside id="set-panel"'))
+  );
+
+  it("is a panel rather than a tab, so the map it is built from stays visible", () => {
+    expect(HTML).toContain('<aside id="set-panel" hidden');
+    expect(HTML).not.toContain('data-tab="set"');
+    expect(HTML).not.toContain('id="view-set"');
+    // Outside <main>, which holds only the tabbed views.
+    expect(HTML.indexOf("</main>")).toBeLessThan(HTML.indexOf('<aside id="set-panel"'));
+  });
+
+  it("keeps the controls main.ts reaches for by id", () => {
+    for (const id of [
+      "suggest-toggle",
+      "sparkline",
+      "export-m3u8",
+      "export-text",
+      "set-clear",
+      "set-list",
+      "set-empty",
+      "set-close",
+    ]) {
+      expect(occurrences(`id="${id}"`)).toBe(1);
+      expect(panel).toContain(`id="${id}"`);
+    }
+  });
+
+  it("is opened from a header button that names itself and carries the count", () => {
+    expect(occurrences('id="set-toggle"')).toBe(1);
+    expect(occurrences('id="set-count"')).toBe(1);
+    expect(HTML).toMatch(/id="set-toggle"[^>]*aria-expanded="false"/);
+    expect(HTML).toMatch(/id="set-toggle"[^>]*aria-controls="set-panel"/);
+    // The count is filled by renderSet and left empty while the set is, so the
+    // markup must not ship a zero for it to read "Set Builder 0" on load.
+    expect(HTML).toContain('>Set Builder<span id="set-count"></span>');
+  });
+
+  it("gives the sparkline no fixed width, since the panel decides it", () => {
+    // A width attribute became a stale drawing surface once the set moved out of
+    // a full-width tab; drawSparkline sizes it from its box instead.
+    expect(panel).not.toMatch(/id="sparkline"[^>]*\bwidth=/);
   });
 });

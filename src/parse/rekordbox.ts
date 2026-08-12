@@ -1,5 +1,6 @@
 import type { Library, Playlist, Track } from "../types";
 import { toCamelot } from "../music/camelot";
+import { canonicalLabel } from "../enrich/label";
 
 /**
  * rekordbox `DJ_PLAYLISTS` collection XML.
@@ -236,11 +237,15 @@ export function rekordboxTrack(attrs: Record<string, string>): Track | null {
     t.source = { ...t.source, key: "rekordbox" };
   }
 
-  // Label and remixer are real signal in a DJ crate, where Genre is patchy.
-  const tags = [nonEmpty(attrs.Label), nonEmpty(attrs.Remixer)].filter(
-    (x): x is string => x !== undefined
-  );
-  if (tags.length) t.tags = tags;
+  const label = canonicalLabel(attrs.Label, artist);
+  if (label) {
+    t.label = label;
+    t.source = { ...t.source, label: "rekordbox" };
+  }
+  // Remixer remains a multi-valued external tag. Label is deliberately routed
+  // to its own block rather than being mixed into this vocabulary.
+  const remixer = nonEmpty(attrs.Remixer);
+  if (remixer) t.tags = [remixer];
 
   return t;
 }

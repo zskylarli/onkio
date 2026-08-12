@@ -95,6 +95,49 @@ export function evaluateSet(tracks: Track[]): Transition[] {
   return out;
 }
 
+// ---- ordering ----
+
+/**
+ * Move one entry to a new position, as a drag or an arrow key asks for.
+ *
+ * `to` is where the entry ends up in the finished list, not where it sat before
+ * anything moved, which is the only reading that lets a caller say "third from
+ * the top" without knowing where the entry started.
+ */
+export function moveItem<T>(list: readonly T[], from: number, to: number): T[] {
+  const out = list.slice();
+  if (from < 0 || from >= out.length) return out;
+  const target = Math.max(0, Math.min(out.length - 1, to));
+  if (target === from) return out;
+  const [item] = out.splice(from, 1);
+  out.splice(target, 0, item);
+  return out;
+}
+
+/**
+ * Put a batch of tracks into a playable order: a tempo ramp, slowest first.
+ *
+ * A lasso answers with a region of the map, which has no order in it at all,
+ * and appending in row order would mean appending in whatever sequence the
+ * library file happened to list them. Ascending BPM is the one ordering that is
+ * useful before anyone looks at it, and it is a starting point rather than a
+ * verdict: rows can be dragged afterwards.
+ *
+ * Tracks with no BPM sort to the end instead of to the front, where a missing
+ * value read as zero would put them, and hold their relative order so a group
+ * from one crate stays together.
+ */
+export function orderForSet(tracks: readonly Track[]): Track[] {
+  return tracks
+    .map((track, i) => ({ track, i }))
+    .sort((a, b) => {
+      const ab = a.track.bpm ?? Infinity;
+      const bb = b.track.bpm ?? Infinity;
+      return ab === bb ? a.i - b.i : ab - bb;
+    })
+    .map((e) => e.track);
+}
+
 // ---- exports (§7.1) ----
 
 export function toM3U8(tracks: Track[], name = "Music Constellation Set"): string {

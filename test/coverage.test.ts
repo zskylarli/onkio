@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   collectionCoverage,
+  describeLabelInfluence,
   describeOutstanding,
   describeSoundInfluence,
   needsLookup,
@@ -54,7 +55,7 @@ describe("collectionCoverage", () => {
   const lib = library(
     [rb, am],
     [
-      track("crate", { bpm: 124, key: "8A" }),
+      track("crate", { bpm: 124, key: "8A", label: "Toolroom" }),
       track("crate", { bpm: 126, key: "9A" }),
       track("crate", { bpm: 128, key: "4A", timbre: new Float32Array([1, 2]) }),
       track("listening"),
@@ -92,6 +93,12 @@ describe("collectionCoverage", () => {
     expect(rows[0].preview).toBe(0);
     expect(rows[1].sound).toBe(0);
     expect(rows[1].preview).toBe(1);
+  });
+
+  it("counts known labels per file", () => {
+    const rows = collectionCoverage(lib);
+    expect(rows[0].labelCount).toBe(1);
+    expect(rows[1].labelCount).toBe(0);
   });
 
   it("counts local files per collection from the tracks that resolved", () => {
@@ -145,7 +152,7 @@ describe("describeSoundInfluence", () => {
     const { enabled, note } = describeSoundInfluence(rows);
     expect(enabled).toBe(false);
     expect(note).toContain("no sound to weigh");
-    expect(note).toContain("Analyze sound in view");
+    expect(note).toContain("Analyze songs");
   });
 
   it("opens it once there is sound, and says how much of the library moves", () => {
@@ -179,6 +186,28 @@ describe("describeSoundInfluence", () => {
     expect(describeSoundInfluence([])).toEqual({
       enabled: false,
       note: expect.stringContaining("no sound to weigh"),
+    });
+  });
+});
+
+describe("describeLabelInfluence", () => {
+  it("disables weighting when coverage is zero", () => {
+    const rows = collectionCoverage(library([meta("crate")], [track("crate")]));
+    const result = describeLabelInfluence(rows);
+    expect(result.enabled).toBe(false);
+    expect(result.note).toContain("no label signal to weigh");
+  });
+
+  it("reports exactly how many tracks can move", () => {
+    const rows = collectionCoverage(
+      library(
+        [meta("crate")],
+        [track("crate", { label: "Toolroom" }), track("crate"), track("crate")]
+      )
+    );
+    expect(describeLabelInfluence(rows)).toEqual({
+      enabled: true,
+      note: expect.stringContaining("1 of 3 tracks"),
     });
   });
 });

@@ -17,7 +17,7 @@ import { lookupItunes } from "./sources/itunes";
  * indistinguishable from "enrichment is broken".
  */
 
-export type Field = "bpm" | "key" | "previewUrl" | "tags";
+export type Field = "bpm" | "key" | "previewUrl" | "tags" | "label";
 
 type Source = {
   name: string;
@@ -27,14 +27,26 @@ type Source = {
 };
 
 const SOURCES: Source[] = [
-  { name: "deezer", provides: ["bpm", "previewUrl"], enabled: () => true, run: lookupDeezer },
+  {
+    name: "deezer",
+    provides: ["bpm", "previewUrl", "label"],
+    enabled: () => true,
+    run: lookupDeezer,
+  },
   {
     name: "getsongbpm",
     provides: ["bpm", "key"],
     enabled: isSongBpmEnabled,
     run: lookupGetSongBpm,
   },
-  { name: "itunes", provides: ["previewUrl", "tags"], enabled: () => true, run: lookupItunes },
+  {
+    // iTunes copyright can supply a label if collection lookup is ever added
+    // for another reason. This source deliberately makes no extra label call.
+    name: "itunes",
+    provides: ["previewUrl", "tags", "label"],
+    enabled: () => true,
+    run: lookupItunes,
+  },
 ];
 
 /** Per-source tallies, surfaced in the UI so a dead source is obvious. */
@@ -68,6 +80,10 @@ function merge(acc: FeatureLookup, next: FeatureLookup): void {
       acc.source = acc.source ? `${acc.source}+${next.source}` : next.source;
   }
   if (next.previewUrl && !acc.previewUrl) acc.previewUrl = next.previewUrl;
+  if (next.label && !acc.label) {
+    acc.label = next.label;
+    acc.labelSource = next.labelSource ?? next.source;
+  }
   // Outlives the signed URL it came with, so it is kept even when a preview is not.
   if (next.deezerId && !acc.deezerId) acc.deezerId = next.deezerId;
   if (next.tags?.length) acc.tags = [...new Set([...(acc.tags ?? []), ...next.tags])];
@@ -103,7 +119,7 @@ export async function lookupFeatures(
     }
   }
 
-  const hit = !!(acc.bpm || acc.key || acc.previewUrl || acc.tags?.length);
+  const hit = !!(acc.bpm || acc.key || acc.previewUrl || acc.tags?.length || acc.label);
   await putCachedLookup(key, hit, hit ? acc : undefined);
   return hit ? acc : null;
 }

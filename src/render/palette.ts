@@ -186,3 +186,8 @@ export const GAP_COLOR: Record<Theme, RGB> = {
   dark: [251, 191, 36],
   light: [166, 88, 16],
 };
+/** The freehand selection outline, matching the accent each theme uses in CSS. */
+export const LASSO_COLOR: Record<Theme, RGB> = {
+  dark: [94, 234, 212],
+  light: [161, 89, 31],
+};

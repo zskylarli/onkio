@@ -46,7 +46,16 @@ export function excerptRange(
   return { start, length: want };
 }
 
-type Job = { track: Track; source: AudioSource; resolve: (r: DspResult | null) => void };
+type Job = {
+  track: Track;
+  source: AudioSource;
+  signal?: AbortSignal;
+  resolve: (r: DspResult | null) => void;
+};
+
+function createWorker(): Worker {
+  return new Worker(new URL("./dsp.worker.ts", import.meta.url), { type: "module" });
+}
 
 export class DspPool {
   private workers: { w: Worker; busy: boolean }[] = [];
@@ -55,10 +64,7 @@ export class DspPool {
 
   constructor() {
     for (let i = 0; i < POOL_SIZE; i++) {
-      const w = new Worker(new URL("./dsp.worker.ts", import.meta.url), {
-        type: "module",
-      });
-      this.workers.push({ w, busy: false });
+      this.workers.push({ w: createWorker(), busy: false });
     }
   }
 
@@ -66,12 +72,16 @@ export class DspPool {
    * Analyze a track from `source`, or from its preview when none is given.
    * Resolves null when there is nothing to listen to.
    */
-  analyze(track: Track, source?: AudioSource): Promise<DspResult | null> {
+  analyze(
+    track: Track,
+    source?: AudioSource,
+    signal?: AbortSignal
+  ): Promise<DspResult | null> {
     const from: AudioSource | null =
       source ?? (track.previewUrl ? { url: track.previewUrl, kind: "preview" } : null);
-    if (!from) return Promise.resolve(null);
+    if (!from || signal?.aborted) return Promise.resolve(null);
     return new Promise((resolve) => {
-      this.queue.push({ track, source: from, resolve });
+      this.queue.push({ track, source: from, signal, resolve });
       this.pump();
     });
   }
@@ -82,19 +92,32 @@ export class DspPool {
     const job = this.queue.shift()!;
     slot.busy = true;
     try {
-      const decoded = await this.decode(job.source);
-      if (!decoded) {
+      const decoded = await this.decode(job.source, job.signal);
+      if (!decoded || job.signal?.aborted) {
         job.resolve(null);
         return;
       }
-      const result = await new Promise<DspResult>((res) => {
-        slot.w.onmessage = (e: MessageEvent<DspResult>) => res(e.data);
+      const result = await new Promise<DspResult | null>((res) => {
+        if (job.signal?.aborted) {
+          res(null);
+          return;
+        }
+        const onAbort = () => {
+          slot.w.terminate();
+          slot.w = createWorker();
+          res(null);
+        };
+        job.signal?.addEventListener("abort", onAbort, { once: true });
+        slot.w.onmessage = (e: MessageEvent<DspResult>) => {
+          job.signal?.removeEventListener("abort", onAbort);
+          res(e.data);
+        };
         slot.w.postMessage(
           { pid: job.track.pid, samples: decoded.samples, sampleRate: decoded.sampleRate },
           [decoded.samples.buffer]
         );
       });
-      job.resolve(result.error ? null : result);
+      job.resolve(result && !result.error ? result : null);
     } catch {
       job.resolve(null);
     } finally {
@@ -104,9 +127,10 @@ export class DspPool {
   }
 
   private async decode(
-    source: AudioSource
+    source: AudioSource,
+    signal?: AbortSignal
   ): Promise<{ samples: Float32Array; sampleRate: number } | null> {
-    const res = await fetch(source.url);
+    const res = await fetch(source.url, { signal });
     if (!res.ok) return null;
     const buf = await res.arrayBuffer();
     this.audioCtx ??= new AudioContext();

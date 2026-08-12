@@ -3,6 +3,7 @@ import { RateLimiter } from "./limiter";
 import { normalizeArtist, normalizeTitle } from "../normalize";
 import { pickBest } from "../match";
 import type { FeatureLookup } from "../../types";
+import { labelFromItunesCopyright } from "../label";
 
 /**
  * iTunes Search API (§4 stage 2.1) — ~20 req/min hard limit (403s beyond it),
@@ -21,6 +22,8 @@ type ItunesResult = {
   artistName?: string;
   previewUrl?: string;
   primaryGenreName?: string;
+  /** Present on album lookup responses; parsed opportunistically, never requested alone. */
+  copyright?: string;
 };
 type ItunesSearch = { resultCount: number; results: ItunesResult[] };
 
@@ -46,9 +49,12 @@ export async function lookupItunes(
     nArtist,
     nTitle
   );
-  if (!best?.item.previewUrl) return null;
+  if (!best) return null;
 
-  const out: FeatureLookup = { previewUrl: best.item.previewUrl, source: "itunes" };
+  const out: FeatureLookup = { source: "itunes" };
+  if (best.item.previewUrl) out.previewUrl = best.item.previewUrl;
   if (best.item.primaryGenreName) out.tags = [best.item.primaryGenreName];
-  return out;
+  out.label = labelFromItunesCopyright(best.item.copyright, artist);
+  if (out.label) out.labelSource = "itunes";
+  return out.previewUrl || out.tags?.length || out.label ? out : null;
 }

@@ -9,7 +9,7 @@ map. It reads a **rekordbox collection XML** (preferred) or an Apple Music xml f
 ```bash
 npm install
 npm run dev     # development server at http://localhost:5173
-npm test        # vitest suite (351 tests incl. full-scale pipeline)
+npm test        # vitest suite, including a full-scale pipeline test
 npm run build   # type-check + production build to dist/
 npm run preview # preview production build at http://localhost:4173
 ```

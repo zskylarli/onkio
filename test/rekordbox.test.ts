@@ -19,7 +19,7 @@ const SYNTHETIC = `<?xml version="1.0" encoding="UTF-8"?>
            Genre="Tech House" Kind="MP3 File" TotalTime="222" Year="2020"
            AverageBpm="124.00" Tonality="6A" DateAdded="2021-01-02"
            Location="file://localhost/Users/dj/Music/Vitamin%20THC%20-%20Above.mp3"
-           Remixer="" Label="Hot Creations" Mix=""/>
+           Remixer="Louie Vega" Label="Hot Creations" Mix=""/>
     <TRACK TrackID="2" Name="Love &amp; Fear &gt; All" Artist="Scissors &amp; Co."
            Genre="House" TotalTime="176" AverageBpm="125.00" Tonality="Am"
            Location="file://localhost/Users/dj/Music/love.mp3" Label=""/>
@@ -66,7 +66,7 @@ describe("rekordbox XML parsing", () => {
     const t = col.tracks.find((x) => x.trackId === 1)!;
     expect(t.bpm).toBe(124);
     expect(t.key).toBe("6A");
-    expect(t.source).toEqual({ bpm: "rekordbox", key: "rekordbox" });
+    expect(t.source).toEqual({ bpm: "rekordbox", key: "rekordbox", label: "rekordbox" });
     expect(t.confidence).toEqual({ bpm: 1, key: 1 });
   });
 
@@ -87,7 +87,9 @@ describe("rekordbox XML parsing", () => {
     expect(t.tags).toBeUndefined();
     const blank = col.tracks.find((x) => x.trackId === 2)!;
     expect(blank.tags).toBeUndefined(); // Label="" is not a tag
-    expect(col.tracks.find((x) => x.trackId === 1)!.tags).toEqual(["Hot Creations"]);
+    const labelled = col.tracks.find((x) => x.trackId === 1)!;
+    expect(labelled.label).toBe("Hot Creations");
+    expect(labelled.tags).toEqual(["Louie Vega"]);
   });
 
   it("drops sampler one-shots and reports the count", () => {
@@ -225,6 +227,13 @@ describe.runIf(existsSync(REAL))("a real rekordbox export", () => {
     const withKey = col.tracks.filter((t) => t.key !== undefined).length;
     expect(withBpm / col.tracks.length).toBeGreaterThan(0.95);
     expect(withKey / col.tracks.length).toBeGreaterThan(0.95);
+  });
+
+  it("extracts cleaned labels without mixing them into tags", () => {
+    const labelled = col.tracks.filter((t) => t.label !== undefined);
+    expect(labelled.length / col.tracks.length).toBeGreaterThan(0.37);
+    expect(labelled.length / col.tracks.length).toBeLessThan(0.42);
+    expect(col.tracks.some((t) => t.tags?.includes("www.bpmsupreme.com"))).toBe(false);
   });
 
   it("produces plausible BPMs and valid Camelot keys", () => {

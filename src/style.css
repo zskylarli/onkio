@@ -1,5 +1,6 @@
 :root,
 :root[data-theme="dark"] {
+  --font-mono: "DM Mono", monospace;
   --bg: #0d1017;
   --panel: #151a24;
   --panel-2: #1c2330;
@@ -35,18 +36,34 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 400 14px/1.45 var(--font-mono);
 }
 
+/* Buttons and form controls do not inherit font-family from body in most
+   browsers; without this they fall back to the system UI stack. */
+button,
+input,
+select,
+textarea,
+summary {
+  font-family: inherit;
+}
+
+/* The set builder holds a column of its own rather than floating over the map:
+   a panel that covered the right of the canvas would cover the tracks a lasso
+   was being drawn around. Closed, the column is zero wide and the map has the
+   room back. */
 #app {
   display: grid;
   grid-template:
-    "header header" auto
-    "sidebar main" 1fr
-    "footer footer" auto / 300px 1fr;
+    "header header header" auto
+    "sidebar main set" 1fr
+    "footer footer footer" auto / 300px 1fr 0;
   height: 100vh;
 }
-#app.sidebar-collapsed { grid-template-columns: 0 1fr; }
+#app.sidebar-collapsed { grid-template-columns: 0 1fr 0; }
+#app.set-open { grid-template-columns: 300px 1fr 340px; }
+#app.sidebar-collapsed.set-open { grid-template-columns: 0 1fr 340px; }
 #app.sidebar-collapsed #sidebar { display: none; }
 
 header {
@@ -62,7 +79,7 @@ header h1 {
   margin: 0;
   margin-right: auto;
   letter-spacing: 0.08em;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .icon-btn {
@@ -89,6 +106,21 @@ header h1 {
 }
 #tabs button.active { color: var(--on-accent); background: var(--accent); border-color: var(--accent); }
 
+#set-toggle {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 4px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+#set-toggle:hover { color: var(--accent); border-color: var(--accent); }
+#set-toggle.on { color: var(--on-accent); background: var(--accent); border-color: var(--accent); }
+/* Nothing to separate while the set is empty: renderSet leaves this empty
+   rather than writing a zero, so the button reads "Set Builder" alone. */
+#set-count { font-variant-numeric: tabular-nums; }
+#set-count:not(:empty) { margin-left: 6px; }
+
 #sidebar {
   grid-area: sidebar;
   overflow-y: auto;
@@ -107,6 +139,17 @@ header h1 {
 .details-head { margin-top: 10px; }
 .details-head.nested { margin-top: 8px; }
 .details-head > details { flex: 1; min-width: 0; }
+.analysis-head > #dsp-start {
+  width: auto;
+  flex-shrink: 0;
+  margin: 0;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+#enrich-scope,
+#dsp-status { margin-top: 4px; }
+#enrich-scope:empty,
+#dsp-status:empty { display: none; }
 
 #sidebar h2 {
   font-size: 12px;
@@ -165,7 +208,7 @@ header h1 {
   transition: opacity 0.12s ease, visibility 0.12s ease;
   white-space: normal;
 }
-.info-popup strong { color: var(--text); font-weight: 600; }
+.info-popup strong { color: var(--text); font-weight: 500; }
 .info-popup-block { display: block; margin-top: 8px; }
 .info-popup code,
 .info-popup em { font-size: inherit; }
@@ -186,6 +229,9 @@ header h1 {
   pointer-events: none;
 }
 #sidebar label { display: block; margin: 8px 0; }
+/* Same top breathing room as .section-head gives the other sidebar blocks. */
+#map-controls { margin-top: 18px; }
+#map-controls label > span { font-size: 12px; }
 #sidebar select,
 #sidebar input[type="password"],
 #sidebar input[type="search"],
@@ -200,8 +246,10 @@ header h1 {
 }
 #sidebar input[type="range"] { accent-color: var(--accent); }
 #sidebar input[type="range"]:disabled { accent-color: var(--muted); cursor: not-allowed; }
-#timbre-note { margin-top: 4px; }
-#timbre-note:empty { display: none; }
+#timbre-note,
+#label-note { margin-top: 4px; }
+#timbre-note:empty,
+#label-note:empty { display: none; }
 #sidebar button {
   width: 100%;
   margin: 6px 0 0;
@@ -214,27 +262,6 @@ header h1 {
 }
 #sidebar button:hover { border-color: var(--accent); }
 
-/* Search results are a short list inside the panel, so they scroll on their
-   own rather than pushing the rest of the map controls out of reach. */
-#search-results { margin: 6px 0 2px; max-height: 216px; overflow-y: auto; }
-#search-results .search-hit {
-  display: block;
-  margin: 3px 0 0;
-  padding: 5px 8px;
-  text-align: left;
-  font-size: 12px;
-}
-#search-results .search-hit:hover { color: var(--accent); }
-.search-hit .hit-name,
-.search-hit .hit-artist {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.search-hit .hit-artist { color: var(--muted); font-size: 11px; }
-#search-results .more { margin-top: 6px; }
-
 #highlight-status { margin: 6px 0 0; }
 #highlight-status:empty { display: none; }
 
@@ -242,7 +269,7 @@ header h1 {
 #local-status:empty { display: none; }
 /* Folder names are long and arbitrary, so they wrap anywhere rather than
    widening the panel or being clipped. */
-#local-status strong { color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
+#local-status strong { color: var(--text); font-weight: 500; overflow-wrap: anywhere; }
 #local-forget { margin-top: 8px; }
 #sidebar button:disabled { color: var(--muted); cursor: not-allowed; }
 #sidebar button:disabled:hover { border-color: var(--border); }
@@ -269,10 +296,22 @@ header h1 {
 .file-drop.dragover { border-color: var(--accent); color: var(--accent); }
 .file-drop input { display: none; }
 
+/* An offer, not a call to action: the same muted link weight as the other
+   secondary controls, tucked under the drop box rather than competing with it. */
+.demo-line { margin: 7px 0 0; text-align: center; }
+.demo-btn { display: inline-flex; align-items: center; gap: 5px; }
+.demo-btn .demo-icon { font-size: 10px; text-decoration: none; color: var(--accent); }
+.demo-btn:disabled { color: var(--muted) !important; cursor: progress; opacity: 0.75; }
+.demo-btn:disabled .demo-icon { color: var(--muted); }
+
 main { grid-area: main; position: relative; overflow: hidden; }
 .view { position: absolute; inset: 0; display: none; overflow-y: auto; }
 .view.active { display: block; }
-#view-map { overflow: hidden; }
+/* A query container, so the overlays can rearrange on how much map there is
+   rather than on how wide the window is. The two are different numbers: the
+   panel and the set builder each take a column out of it, and at 900px with
+   both open the map is 260px across. */
+#view-map { overflow: hidden; container-type: inline-size; }
 #scatter-canvas { width: 100%; height: 100%; display: block; }
 
 /* ---- map overlays ---- */
@@ -300,6 +339,8 @@ main { grid-area: main; position: relative; overflow: hidden; }
   border-color: var(--accent);
   color: var(--on-accent);
 }
+/* Icon-only, like the header's toggles: square rather than padded to a word. */
+#map-toolbar button.icon-btn { width: 30px; height: 28px; padding: 0; font-size: 15px; }
 /* First in the toolbar so that appearing extends the row leftwards instead of
    shifting the buttons out from under the pointer. */
 #browse-note {
@@ -312,6 +353,149 @@ main { grid-area: main; position: relative; overflow: hidden; }
   font-size: 12px;
 }
 
+/* Zoom sits at the opposite corner from the toolbar, stacked the way every map
+   stacks it. #view-map begins after the sidebar column, so this is clear of the
+   panel with it shown and with it collapsed alike. */
+#map-zoom {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 15;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+#map-zoom button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 28px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+#map-zoom button:last-child { border-bottom: none; }
+#map-zoom button:hover { color: var(--accent); background: var(--panel-2); }
+
+/* Centred on the map, with 200px kept clear on each side for the zoom stack and
+   the toolbar. Subtracting both reservations from the width is what makes that
+   a guarantee rather than an intention: the field gives up width as the map
+   narrows instead of growing into its neighbours. */
+#map-search {
+  position: absolute;
+  top: 14px;
+  left: 200px;
+  right: 200px;
+  width: min(400px, calc(100% - 400px));
+  margin: 0 auto;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  height: 32px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: 0 4px 14px var(--shadow);
+}
+#map-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--shadow); }
+#map-search .search-icon { display: flex; flex: none; color: var(--muted); }
+#map-search input[type="search"] {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+#map-search input::placeholder { color: var(--muted); }
+
+/* Below this the shared row leaves the field too narrow to type a title into,
+   so it takes a row of its own under the toolbar rather than being squeezed
+   into a slot no wider than its own placeholder. */
+@container (max-width: 640px) {
+  #map-search {
+    top: 52px;
+    left: 56px;
+    right: 14px;
+    width: auto;
+    margin: 0;
+  }
+}
+
+/* A dropdown under the field, not an inline list: it hangs over the canvas and
+   scrolls, so a long result list never runs off the bottom of the map. */
+#search-results {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: min(340px, 60vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 4px;
+  box-shadow: 0 10px 28px var(--shadow);
+}
+#search-results .search-hit {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 5px 8px;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+#search-results .search-hit:hover,
+#search-results .search-hit:focus-visible { background: var(--panel-2); color: var(--accent); }
+.search-hit .hit-name,
+.search-hit .hit-artist {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-hit .hit-artist { color: var(--muted); font-size: 11px; }
+#search-results .more { padding: 4px 8px 6px; }
+
+/* Transient by construction: shown while a gesture is drawn and for a moment
+   after it lands, at the foot of the map where the pointer is not. */
+#lasso-feedback {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  z-index: 15;
+  pointer-events: none;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 4px 14px var(--shadow);
+}
+
 #legend {
   position: absolute;
   left: 14px;
@@ -320,18 +504,58 @@ main { grid-area: main; position: relative; overflow: hidden; }
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 10px 12px;
-  min-width: 160px;
-  max-width: 260px;
+  padding: 8px 12px 10px;
+  /* Fixed enough for the two short control rows, but still able to shrink with
+     the map when both side panels leave it a narrow column. */
+  width: min(240px, calc(100% - 28px));
   max-height: 48%;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
+/* Only the rows scroll, so the control that put them away stays reachable. */
+#legend-body { display: flex; flex-direction: column; min-height: 0; }
+#legend-items { overflow-y: auto; min-height: 0; }
+#legend.collapsed { padding-bottom: 8px; }
+#legend.collapsed #legend-body { display: none; }
+.legend-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+#legend.collapsed .legend-head { margin-bottom: 0; }
 #legend-title {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--muted);
-  margin-bottom: 6px;
+  margin-right: auto;
+}
+#legend-collapse { width: 22px; height: 20px; font-size: 11px; }
+.legend-controls {
+  flex: none;
+  padding-bottom: 7px;
+  margin-bottom: 5px;
+  border-bottom: 1px solid var(--border);
+}
+.legend-control {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  margin: 3px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.legend-control select {
+  width: 100%;
+  min-width: 0;
+  padding: 3px 5px;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font: inherit;
+}
+#legend #highlight-status {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
 }
 .legend-row { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 1px 0; }
 .legend-swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
@@ -350,7 +574,7 @@ main { grid-area: main; position: relative; overflow: hidden; }
   z-index: 10;
   box-shadow: 0 6px 18px var(--shadow);
 }
-#tooltip .t-name { font-weight: 600; }
+#tooltip .t-name { font-weight: 500; }
 #tooltip .t-meta { color: var(--muted); }
 
 .badge {
@@ -432,39 +656,84 @@ main { grid-area: main; position: relative; overflow: hidden; }
 .chip:hover { border-color: var(--accent); color: var(--accent); }
 .chip.copied { border-color: var(--accent); color: var(--accent); }
 
-.side-name { font-weight: 600; }
+.side-name { font-weight: 500; }
 
 /* ---- set builder / taste ---- */
 
-#view-set, #view-taste { padding: 20px 26px; }
-.set-head { max-width: 620px; }
-.set-actions { display: flex; gap: 8px; margin: 10px 0; }
+#view-taste { padding: 20px 26px; }
+
+#set-panel {
+  grid-area: set;
+  overflow-y: auto;
+  padding: 12px 14px;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+}
+.panel-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+#set-panel h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 0;
+  margin-right: auto;
+}
+#set-panel .check { display: block; font-size: 12px; margin: 8px 0; cursor: pointer; }
+#set-panel .check input { accent-color: var(--accent); }
+#set-empty { margin: 10px 0 0; }
+
+.set-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
 .set-actions button {
-  padding: 6px 14px;
+  flex: 1;
+  min-width: 92px;
+  padding: 6px 10px;
   background: var(--panel-2);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 6px;
   cursor: pointer;
+  font-size: 12px;
 }
-#sparkline { display: block; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; margin-top: 10px; }
+.set-actions button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.set-actions button:disabled { color: var(--muted); cursor: not-allowed; }
+#sparkline {
+  display: block;
+  width: 100%;
+  height: 60px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-top: 8px;
+}
 
-#set-list { max-width: 620px; padding-left: 0; list-style: none; counter-reset: set; }
+#set-list { padding-left: 0; list-style: none; counter-reset: set; margin: 10px 0 0; }
 #set-list li {
   counter-increment: set;
-  background: var(--panel);
+  background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 8px 12px;
+  padding: 7px 10px;
   margin: 6px 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  font-size: 12px;
 }
 #set-list li::before { content: counter(set, decimal-leading-zero); color: var(--muted); }
-#set-list .grow { flex: 1; }
-#set-list .warnings { color: var(--warn); font-size: 12px; }
-#set-list .remove { cursor: pointer; color: var(--muted); background: none; border: none; font-size: 15px; }
+#set-list .grow { flex: 1; min-width: 0; }
+#set-list .title, #set-list .meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#set-list .warnings { color: var(--warn); }
+#set-list .remove { cursor: pointer; color: var(--muted); background: none; border: none; font-size: 14px; padding: 0; }
+#set-list .remove:hover { color: var(--danger); }
+/* The handle is the affordance; the row is draggable anywhere, since a 12px
+   target is a poor one and rows carry no text selection worth protecting. */
+#set-list .handle { cursor: grab; color: var(--muted); user-select: none; line-height: 1; }
+#set-list li.dragging { opacity: 0.4; border-color: var(--accent); }
+#set-list li:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+/* Which side of the row the drop will land on, drawn as an edge rather than as
+   a moving gap so the list does not reflow under the pointer. */
+#set-list li.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+#set-list li.drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 
 .taste-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; max-width: 1100px; }
 .card {
@@ -483,7 +752,16 @@ footer {
   grid-area: footer;
   padding: 6px 18px;
   border-top: 1px solid var(--border);
+  text-align: center;
 }
+
+/* Inline SVG rather than emoji, so both marks take their colour from the theme
+   and stay crisp at the size a credit line wants. */
+.footer-line { display: inline-flex; align-items: center; gap: 5px; }
+.footer-icon { width: 13px; height: 13px; flex: none; }
+.footer-icon.heart { color: var(--danger); }
+.footer-ig { display: inline-flex; color: var(--muted); }
+.footer-ig:hover { color: var(--accent); }
 
 .muted { color: var(--muted); }
 .small { font-size: 11px; }
@@ -568,3 +846,39 @@ table.cmp tr.excluded td { color: var(--muted); }
   background: var(--panel-2);
 }
 .mix-bar > span { display: block; height: 100%; }
+
+.dm-mono-light {
+  font-family: var(--font-mono);
+  font-weight: 300;
+  font-style: normal;
+}
+
+.dm-mono-regular {
+  font-family: var(--font-mono);
+  font-weight: 400;
+  font-style: normal;
+}
+
+.dm-mono-medium {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-style: normal;
+}
+
+.dm-mono-light-italic {
+  font-family: var(--font-mono);
+  font-weight: 300;
+  font-style: italic;
+}
+
+.dm-mono-regular-italic {
+  font-family: var(--font-mono);
+  font-weight: 400;
+  font-style: italic;
+}
+
+.dm-mono-medium-italic {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-style: italic;
+}

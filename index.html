@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Onkio</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300;1,400;1,500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
@@ -14,9 +17,9 @@
         <h1>Onkio</h1>
         <nav id="tabs">
           <button data-tab="map" class="active">Map</button>
-          <button data-tab="set">Set Builder</button>
           <button data-tab="taste">Taste</button>
         </nav>
+        <button id="set-toggle" aria-expanded="false" aria-controls="set-panel" title="Set builder  ]">Set Builder<span id="set-count"></span></button>
         <button id="theme-toggle" class="icon-btn" title="Switch theme" aria-label="Switch theme">☀</button>
       </header>
 
@@ -39,6 +42,15 @@
             <input type="file" id="file-input" accept=".xml" multiple />
             <span>Drop collection XML files here or click to choose</span>
           </label>
+          <!-- Outside the label on purpose: a click anywhere inside it is
+               forwarded to the file input, so a demo button in there would open
+               the file picker as well as load the demo. -->
+          <p class="demo-line">
+            <button type="button" id="demo-load" class="link-btn demo-btn" title="Load a bundled 300-track rekordbox export">
+              <span class="demo-icon" aria-hidden="true">✦</span>
+              <span id="demo-load-label">No file? Load the demo collection</span>
+            </button>
+          </p>
           <fieldset id="import-mode" hidden>
             <legend class="muted small">Files you add next will</legend>
             <label class="radio">
@@ -51,7 +63,7 @@
             </label>
           </fieldset>
           <div id="collection-list" hidden></div>
-          <div id="import-status" class="muted"></div>
+          <div id="import-status" class="muted small"></div>
           <div id="import-undo" hidden>
             <button id="undo-import" class="link-btn">Undo the last import</button>
           </div>
@@ -81,61 +93,73 @@
         <section id="map-controls" hidden>
           <h2>Map</h2>
           <label>
-            Color by
-            <select id="color-mode">
-              <option value="cluster">Cluster</option>
-              <option value="collection">Collection</option>
-              <option value="bpm">BPM</option>
-              <option value="key">Key</option>
-              <option value="year">Year</option>
-            </select>
-          </label>
-          <label>
             <span>Mixability ⟷ Taste</span>
             <input type="range" id="semantic-slider" min="0" max="100" value="50" />
           </label>
-          <label>
-            Find a track
-            <input type="search" id="track-search" placeholder="Title or artist" autocomplete="off" spellcheck="false" />
-          </label>
-          <div id="search-results" hidden></div>
-          <label>
-            Highlight playlist
-            <select id="playlist-filter">
-              <option value="">— none —</option>
-            </select>
-          </label>
-          <div id="highlight-status" class="muted small"></div>
-          <div id="embed-status" class="muted"></div>
+          <div id="embed-status" class="muted small"></div>
+        </section>
+
+        <section id="enrich-section" hidden>
+          <div class="section-head analysis-head">
+            <h2>Analysis</h2>
+            <button id="dsp-start">Analyze songs</button>
+            <span class="info-tip">
+              <button type="button" class="info-btn" aria-label="About analysis" title="About analysis">ⓘ</button>
+              <span class="info-popup" role="tooltip">
+                Best-effort analysis for tracks missing BPM and key information
+                using the Deezer API. Also performs label lookup for label-based
+                clustering.
+              </span>
+            </span>
+          </div>
+          <div id="enrich-scope" class="muted small"></div>
+          <div id="dsp-status" class="muted small"></div>
+
+          <details id="online-lookups">
+            <summary>Options</summary>
+
+            <details id="diagnostics">
+              <summary>Diagnostics</summary>
+              <div id="source-stats" class="small muted"></div>
+              <button id="retry-misses">Retry failed lookups</button>
+            </details>
+
+            <div class="details-head nested">
+              <details>
+                <summary>GetSongBPM (optional key)</summary>
+                <input type="password" id="gsb-key" placeholder="API key" />
+                <input type="url" id="gsb-proxy" placeholder="Optional proxy URL" />
+                <p class="muted small">
+                  BPM &amp; key data from
+                  <a href="https://getsongbpm.com" target="_blank" rel="noopener">GetSongBPM</a>
+                </p>
+              </details>
+              <span class="info-tip">
+                <button type="button" class="info-btn" aria-label="About GetSongBPM" title="About GetSongBPM">ⓘ</button>
+                <span class="info-popup" role="tooltip">
+                  GetSongBPM is the only source of musical key that does not require
+                  analyzing audio. Add a free API key to switch it on. The browser reads
+                  the API directly, so no proxy is needed. The proxy field is a fallback
+                  in case that stops working. Leave both blank to skip.
+                  <span class="info-popup-block">Measured on 1,000 tracks of an Apple Music library: 31% came back with both BPM and key, at about a second and a half each. Matches found on title alone are the unreliable tail and are rejected.</span>
+                </span>
+              </span>
+            </div>
+          </details>
+
+          <div class="section-head">
+            <h2>Coverage</h2>
+          </div>
+          <div id="coverage"></div>
         </section>
 
         <section id="sound-section" hidden>
           <div class="section-head">
-            <h2>Sound</h2>
-            <span class="info-tip">
-              <button type="button" class="info-btn" aria-label="About sound analysis" title="About sound analysis">ⓘ</button>
-              <span class="info-popup" role="tooltip">
-                Listens to each track and measures how it actually sounds
-                (brightness, texture, how percussive it is) so the map can be
-                built from the audio instead of from how tracks are filed.
-                With a music folder connected it listens to the files
-                themselves, which reaches the personal edits and bounces that
-                have no preview. Without one it falls back to 30-second
-                previews, and those exist for catalogue tracks only, roughly
-                two thirds of a typical DJ crate. Tracks that could not be
-                heard are drawn as <strong>hollow rings</strong> and stay
-                positioned by metadata, so the map does not pretend to know how
-                they sound.
-                <span class="info-popup-block">A file is sampled for the same 30 seconds a preview would give, taken from a third of the way in. Measuring whole tracks alongside short previews would sort the map by which tracks had files rather than by how they sound.</span>
-              </span>
-            </span>
+            <h2>Advanced clustering</h2>
           </div>
-          <button id="sound-analyze">Analyze sound in view</button>
-          <div id="sound-status" class="muted"></div>
-
           <div class="details-head">
             <details id="sound-advanced">
-              <summary>Sound influence (advanced)</summary>
+              <summary>Sound influence</summary>
               <label>
                 <span>Sound influence on the map</span>
                 <input type="range" id="timbre-slider" min="0" max="100" value="0" disabled />
@@ -145,69 +169,36 @@
             <span class="info-tip">
               <button type="button" class="info-btn" aria-label="About sound influence" title="About sound influence">ⓘ</button>
               <span class="info-popup" role="tooltip">
+                Listens to each track and measures how it actually sounds
+                (brightness, texture, how percussive it is) so the map can be
+                built from the audio instead of from how tracks are filed.
+                <span class="info-popup-block">
                 Sets how much the measured audio counts when the map is laid
                 out, against BPM, key, genre and playlist company. At zero the
                 layout ignores sound entirely. Only tracks that have been
                 analyzed can move, so run the analysis first. Changing this
                 rebuilds the whole map.
+                </span>
               </span>
             </span>
           </div>
-        </section>
-
-        <section id="enrich-section" hidden>
-          <h2>Coverage</h2>
-          <div id="coverage"></div>
-
           <div class="details-head">
-            <details id="online-lookups">
-              <summary>Online lookups (advanced)</summary>
-
-              <div id="enrich-scope" class="muted small"></div>
-              <button id="enrich-toggle">Start lookups</button>
-              <div id="enrich-status" class="muted">idle</div>
-
-              <button id="dsp-start">Analyze what's in view</button>
-              <div id="dsp-status" class="muted"></div>
-
-              <details id="diagnostics">
-                <summary>Diagnostics</summary>
-                <div id="source-stats" class="small muted"></div>
-                <button id="retry-misses">Retry failed lookups</button>
-              </details>
-
-              <div class="details-head nested">
-                <details>
-                  <summary>GetSongBPM (optional key)</summary>
-                  <input type="password" id="gsb-key" placeholder="API key" />
-                  <input type="url" id="gsb-proxy" placeholder="Optional proxy URL" />
-                  <p class="muted small">
-                    BPM &amp; key data from
-                    <a href="https://getsongbpm.com" target="_blank" rel="noopener">GetSongBPM</a>
-                  </p>
-                </details>
-                <span class="info-tip">
-                  <button type="button" class="info-btn" aria-label="About GetSongBPM" title="About GetSongBPM">ⓘ</button>
-                  <span class="info-popup" role="tooltip">
-                    GetSongBPM is the only source of musical key that does not require
-                    analyzing audio. Add a free API key to switch it on. The browser reads
-                    the API directly, so no proxy is needed. The proxy field is a fallback
-                    in case that stops working. Leave both blank to skip.
-                    <span class="info-popup-block">Measured on 1,000 tracks of an Apple Music library: 31% came back with both BPM and key, at about a second and a half each. Matches found on title alone are the unreliable tail and are rejected.</span>
-                  </span>
-                </span>
-              </div>
+            <details id="label-advanced">
+              <summary>Label influence</summary>
+              <label>
+                <span>Label influence on the map</span>
+                <input type="range" id="label-slider" min="0" max="100" value="75" disabled />
+              </label>
+              <div id="label-note" class="muted small"></div>
             </details>
             <span class="info-tip">
-              <button type="button" class="info-btn" aria-label="About online lookups" title="About online lookups">ⓘ</button>
+              <button type="button" class="info-btn" aria-label="About label influence" title="About label influence">ⓘ</button>
               <span class="info-popup" role="tooltip">
-                Best-effort only, and aimed at the tracks that need it: a
-                collection that already carries BPM and key is skipped entirely,
-                so lookups are never spent re-learning what a rekordbox export
-                already knows.
-                <span class="info-popup-block"><strong>Deezer:</strong> BPM where available, plus a 30s preview for nearly everything.</span>
-                <span class="info-popup-block"><strong>Browser analysis:</strong> estimates key and BPM from previews. Pan the map and run again to expand.</span>
-                <span class="info-popup-block">Expect roughly a third of a catalogue library to resolve, at about two seconds each. A rekordbox export remains the only reliable way to fill these in.</span>
+                Groups tracks by record-label roster. Labels are cleaned from
+                rekordbox exports and filled from Deezer album metadata during
+                song analysis. Rare labels do not form a catch-all group, and
+                tracks with no known label get no label signal.
+                <span class="info-popup-block">This setting changes how strongly shared labels pull tracks together. It only affects tracks whose label is known and rebuilds the whole map.</span>
               </span>
             </span>
           </div>
@@ -220,52 +211,117 @@
 
           <div id="map-toolbar">
             <span id="browse-note" hidden>Click the map once to allow audio</span>
+            <button id="lasso-toggle" aria-pressed="false" title="Draw a circle around tracks">Lasso</button>
             <button id="gaps-toggle" aria-pressed="false" title="Show gaps — pairs of clusters with almost nothing between them">Gaps</button>
-            <button id="zoom-out" title="Zoom out  −">−</button>
-            <button id="zoom-in" title="Zoom in  +">+</button>
-            <button id="reset-view" title="Reset the view">Reset</button>
-            <button id="legend-toggle" aria-pressed="false" title="Show or hide the legend">Legend</button>
-            <button id="browse-toggle" aria-pressed="false" title="Browsing mode — rest the pointer on a dot to hear it, without clicking">Browsing</button>
+            <button id="browse-toggle" class="icon-btn" aria-pressed="false" aria-label="Browsing mode" title="Browsing mode — rest the pointer on a dot to hear it, without clicking">♪</button>
+          </div>
+
+          <!-- Inside #view-map, which starts after the sidebar column, so the
+               left edge here is clear of the panel whether it is shown or not. -->
+          <div id="map-zoom">
+            <button id="zoom-in" title="Zoom in  +" aria-label="Zoom in">+</button>
+            <button id="zoom-out" title="Zoom out  −" aria-label="Zoom out">−</button>
+            <!-- Drawn rather than typed: the "fit" arrow at U+2922 is missing
+                 from enough system fonts to render as an empty box. -->
+            <button id="reset-view" title="Reset the view" aria-label="Reset the view">
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4" /></svg>
+            </button>
+          </div>
+
+          <div id="map-search">
+            <span class="search-icon" aria-hidden="true">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="7" cy="7" r="4.2" /><path d="M10.2 10.2 14 14" /></svg>
+            </span>
+            <input type="search" id="track-search" placeholder="Find a track" aria-label="Find a track" autocomplete="off" spellcheck="false" />
+            <div id="search-results" hidden></div>
           </div>
 
           <div id="legend" hidden>
-            <div id="legend-title"></div>
-            <div id="legend-items"></div>
+            <div class="legend-head">
+              <div id="legend-title"></div>
+              <button id="legend-collapse" class="icon-btn" aria-expanded="true" aria-controls="legend-body" aria-label="Minimize the legend" title="Minimize the legend">▾</button>
+            </div>
+            <div id="legend-body">
+              <div class="legend-controls">
+                <label class="legend-control">
+                  <span>Color by</span>
+                  <select id="color-mode">
+                    <option value="cluster">Cluster</option>
+                    <option value="collection">Collection</option>
+                    <option value="bpm">BPM</option>
+                    <option value="key">Key</option>
+                    <option value="year">Year</option>
+                  </select>
+                </label>
+                <label class="legend-control">
+                  <span>Highlight playlist</span>
+                  <select id="playlist-filter" aria-label="Highlight playlist">
+                    <option value="">— none —</option>
+                  </select>
+                </label>
+                <div id="highlight-status" class="muted small"></div>
+              </div>
+              <div id="legend-items"></div>
+            </div>
           </div>
+
+          <!-- Only ever transient: what a gesture is catching, and what it
+               caught. Placed clear of the pointer and of the top row, and left
+               untouchable so it can never swallow the next gesture. -->
+          <div id="lasso-feedback" role="status" aria-live="polite" hidden></div>
 
           <div id="tooltip" hidden></div>
           <div id="track-popover" class="popover" hidden></div>
           <div id="gap-popover" class="popover" hidden></div>
         </div>
 
-        <div id="view-set" class="view">
-          <div class="set-head">
-            <h2>Set Builder</h2>
-            <p class="muted">
-              Click tracks on the map to append. Suggestion mode highlights
-              valid next tracks. Warnings, never blocks.
-            </p>
-            <label><input type="checkbox" id="suggest-toggle" /> Suggestion mode</label>
-            <canvas id="sparkline" width="560" height="60"></canvas>
-            <div class="set-actions">
-              <button id="export-m3u8">Export M3U8</button>
-              <button id="export-text">Copy tracklist</button>
-              <button id="set-clear">Clear</button>
-            </div>
-          </div>
-          <ol id="set-list"></ol>
-        </div>
-
         <div id="view-taste" class="view"><div id="taste-body"></div></div>
       </main>
 
+      <aside id="set-panel" hidden aria-label="Set builder">
+        <div class="panel-head">
+          <h2>Set builder</h2>
+          <span class="info-tip">
+            <button type="button" class="info-btn" aria-label="About the set builder" title="About the set builder">ⓘ</button>
+            <span class="info-popup" role="tooltip">
+              A set is built from the map. Click a dot and choose Add to set, or
+              switch on <strong>Lasso</strong> in the map toolbar and draw a
+              circle around a group to take all of it at once.
+              <span class="info-popup-block">Tracks arriving from a lasso are ordered slowest to fastest, which is a starting point rather than a decision. Drag a row by its handle to move it, or hold Alt and press the up and down arrows.</span>
+              <span class="info-popup-block">Suggestion mode lights up every track on the map that would mix cleanly out of the last one in the set. Key and tempo trouble is reported under each row as a warning, never as a block.</span>
+            </span>
+          </span>
+          <button id="set-close" class="icon-btn" title="Close  ]" aria-label="Close the set builder">✕</button>
+        </div>
+        <label class="check"><input type="checkbox" id="suggest-toggle" /> Suggestion mode</label>
+        <canvas id="sparkline" height="60"></canvas>
+        <div class="set-actions">
+          <button id="export-m3u8">Export M3U8</button>
+          <button id="export-text">Copy tracklist</button>
+          <button id="set-clear">Clear</button>
+        </div>
+        <ol id="set-list"></ol>
+        <p id="set-empty" class="muted small">
+          Nothing in the set yet. Click a track on the map and choose Add to
+          set, or use the Lasso to take a whole region.
+        </p>
+      </aside>
+
       <footer>
-        <span class="muted small">
-          BPM and key come from your rekordbox export where you have one.
-          Optional online sources: Deezer, iTunes Search, and BPM &amp; key data from
-          <a href="https://getsongbpm.com" target="_blank" rel="noopener">GetSongBPM</a>.
-          Values marked "dsp" are estimated in-browser, from your own files when
-          a music folder is connected and from 30s previews otherwise.
+        <span class="muted small footer-line">
+          Made with
+          <svg class="footer-icon heart" viewBox="0 0 24 24" role="img" aria-label="love">
+            <path fill="currentColor" d="M12 20.7l-1.45-1.32C5.4 14.74 2 11.66 2 7.9 2 5.2 4.14 3 6.8 3c1.54 0 3 .73 3.95 1.9L12 6.1l1.25-1.2C14.2 3.73 15.66 3 17.2 3 19.86 3 22 5.2 22 7.9c0 3.76-3.4 6.84-8.55 11.49L12 20.7z" />
+          </svg>
+          by KYRA
+          <span aria-hidden="true">·</span>
+          <a class="footer-ig" href="https://www.instagram.com/kyla.rpm/" target="_blank" rel="noopener" aria-label="KYRA on Instagram" title="KYRA on Instagram">
+            <svg class="footer-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="2" y="2" width="20" height="20" rx="5" />
+              <circle cx="12" cy="12" r="4" />
+              <circle cx="17.4" cy="6.6" r="1.2" fill="currentColor" stroke="none" />
+            </svg>
+          </a>
         </span>
       </footer>
     </div>

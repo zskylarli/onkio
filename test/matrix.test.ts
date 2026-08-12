@@ -26,6 +26,61 @@ const playlists: Playlist[] = [
   { name: "P2", pids: ["c", "d"] },
 ];
 
+describe("label block", () => {
+  const labelled = [
+    mkTrack({ pid: "a", label: "Confession" }),
+    mkTrack({ pid: "b", label: "Confession Records" }),
+    mkTrack({ pid: "c", label: "Toolroom" }),
+    mkTrack({ pid: "d", label: "Toolroom Records" }),
+    mkTrack({ pid: "e", label: "One-off" }),
+    mkTrack({ pid: "f" }),
+  ];
+  const exclude = [
+    "playlists",
+    "genre",
+    "tags",
+    "artist",
+    "bpm",
+    "key",
+    "year",
+    "duration",
+    "timbre",
+  ] as const;
+
+  it("uses min-count two vocabulary and folds display variants", () => {
+    const off = buildFeatureMatrix(labelled, [], { labelWeight: 0, exclude });
+    const on = buildFeatureMatrix(labelled, [], { labelWeight: 0.75, exclude });
+    expect(on.d - off.d).toBe(2);
+  });
+
+  it("leaves missing and singleton labels all-zero", () => {
+    const m = buildFeatureMatrix(labelled, [], { labelWeight: 0.75, exclude });
+    const labelWidth = m.d - 8;
+    for (const row of [4, 5]) {
+      expect(
+        Array.from(m.data.subarray(row * m.d, row * m.d + labelWidth)).every((v) => v === 0)
+      ).toBe(true);
+    }
+  });
+
+  it("scales RMS over labelled rows rather than coverage", () => {
+    const m = buildFeatureMatrix(labelled, [], {
+      semanticWeight: 0.5,
+      labelWeight: 0.75,
+      exclude,
+    });
+    const width = m.d - 8;
+    let ss = 0;
+    for (const row of [0, 1, 2, 3])
+      for (let c = 0; c < width; c++) ss += m.data[row * m.d + c] ** 2;
+    expect(Math.sqrt(ss / 4)).toBeCloseTo(0.75, 5);
+  });
+
+  it("costs no dimensions at zero influence", () => {
+    expect(buildFeatureMatrix(labelled, [], { labelWeight: 0, exclude }).d).toBe(8);
+  });
+});
+
 describe("timbre block (partially observed by nature)", () => {
   const TI = 6;
   const vec = (...v: number[]) => Float32Array.from(v);

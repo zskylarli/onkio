@@ -1,11 +1,12 @@
 import { Deck, OrthographicView, type Layer, type PickingInfo } from "@deck.gl/core";
-import { ScatterplotLayer, LineLayer, TextLayer } from "@deck.gl/layers";
+import { ScatterplotLayer, LineLayer, PolygonLayer, TextLayer } from "@deck.gl/layers";
 import type { Track } from "../types";
 import { parseCamelot } from "../music/camelot";
 import {
   CLUSTER_COLORS,
   DEFAULT_BPM_SCALE,
   GAP_COLOR,
+  LASSO_COLOR,
   NO_DATA,
   bpmBin,
   bpmBinLabel,
@@ -19,6 +20,13 @@ import {
   type RGB,
   type Theme,
 } from "./palette";
+import {
+  LASSO_MIN_POINTS,
+  indicesInPolygon,
+  shouldAppend,
+  type Bounds,
+  type Point,
+} from "../views/lasso";
 
 /**
  * WebGL scatter (§6): deck.gl ScatterplotLayer — picking, zoom and hover come
@@ -105,6 +113,11 @@ type Callbacks = {
   onClick?: (track: Track | null, x: number, y: number) => void;
   onGapClick?: (index: number) => void;
   onViewChange?: () => void;
+  /**
+   * Row indices caught by a freehand selection: repeatedly as it is drawn, then
+   * once with `done` when the pointer is released.
+   */
+  onLasso?: (indices: number[], done: boolean) => void;
 };
 
 /** One doubling per press, the step a double-click and every map app uses. */
@@ -118,6 +131,7 @@ const PULSE_MS = 1400;
 
 export class Scatter {
   private deck: Deck<OrthographicView>;
+  private canvas: HTMLCanvasElement;
   private state: ScatterState | null = null;
   private colorMode: ColorMode = "cluster";
   private theme: Theme = "dark";
@@ -139,6 +153,8 @@ export class Scatter {
   private fitted: ViewState = this.viewState;
   /** widest side of the laid-out data, in world units — framing is relative to it */
   private span = 1;
+  /** the laid-out data's extent in world units, as `fitView` measured it */
+  private dataBounds: Bounds | null = null;
   /** the dot under the pointer, drawn and animated on its own (see hoverLayers) */
   private hovered: { pid: string; index: number } | null = null;
   private pulseHandle: number | null = null;
@@ -146,27 +162,37 @@ export class Scatter {
   private reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)") ?? null;
   /** what `update` last built, so a pulse frame can reuse it untouched */
   private baseLayers: Layer[] = [];
+  /**
+   * Drag to pan, wheel to zoom, double-click to zoom in where you clicked,
+   * arrow keys to nudge. Rotation is meaningless for an embedding, so it stays
+   * off. Wheel speed is double deck's default, which asked for four or five
+   * notches to cross a single zoom level.
+   */
+  private readonly controller = {
+    dragPan: true,
+    dragRotate: false,
+    scrollZoom: { smooth: true, speed: 0.02 },
+    doubleClickZoom: true,
+    touchZoom: true,
+    touchRotate: false,
+    keyboard: true,
+    inertia: 300,
+  };
+  private lassoMode = false;
+  /** the gesture in progress, in world units, or empty when nothing is drawn */
+  private lassoWorld: Point[] = [];
+  /** the same path in screen pixels, which is where thinning it is meaningful */
+  private lassoScreen: Point[] = [];
+  private lassoDrawing = false;
   private cb: Callbacks;
 
   constructor(canvas: HTMLCanvasElement, cb: Callbacks = {}) {
     this.cb = cb;
+    this.canvas = canvas;
     this.deck = new Deck({
       canvas,
       views: new OrthographicView({ flipY: false }),
-      // Explicit controller config: drag to pan, wheel to zoom, double-click to
-      // zoom in where you clicked, arrow keys to nudge. Rotation is meaningless
-      // for an embedding, so it stays off. Wheel speed is double deck's default,
-      // which asked for four or five notches to cross a single zoom level.
-      controller: {
-        dragPan: true,
-        dragRotate: false,
-        scrollZoom: { smooth: true, speed: 0.02 },
-        doubleClickZoom: true,
-        touchZoom: true,
-        touchRotate: false,
-        keyboard: true,
-        inertia: 300,
-      },
+      controller: this.controller,
       pickingRadius: 6, // forgiving hit target — points are 2–3 px
       viewState: this.viewState,
       onViewStateChange: (params: { viewState: unknown }) => {
@@ -178,14 +204,22 @@ export class Scatter {
         this.cb.onViewChange?.();
       },
       getCursor: ({ isDragging, isHovering }) =>
-        isDragging ? "grabbing" : isHovering ? "pointer" : "grab",
+        this.lassoMode ? "crosshair" : isDragging ? "grabbing" : isHovering ? "pointer" : "grab",
       layers: [],
       onHover: (info: PickingInfo) => {
+        // Mid-gesture the pointer is drawing, not pointing: a hover would light
+        // dots up and, in Browsing mode, start playing whatever it crossed.
+        if (this.lassoMode) {
+          this.setHovered(null, -1);
+          this.cb.onHover?.(null, info.x, info.y);
+          return;
+        }
         const track = info.layer?.id === "tracks" ? (info.object as Track) : null;
         this.setHovered(track, track ? info.index : -1);
         this.cb.onHover?.(track ?? null, info.x, info.y);
       },
       onClick: (info: PickingInfo) => {
+        if (this.lassoMode) return;
         if (info.layer?.id === "gaps" && info.object) {
           this.cb.onGapClick?.((info.object as GapMarker).index);
           return;
@@ -194,12 +228,157 @@ export class Scatter {
         this.cb.onClick?.(track ?? null, info.x, info.y);
       },
     });
+
+    // Own listeners rather than deck's drag events: deck reports a drag as a
+    // start, a delta and an end, and a freehand outline needs every position in
+    // between.
+    //
+    // `pointerdown` is taken in the capture phase because that is what decides
+    // whether deck sees the gesture at all: mjolnir binds `pointerdown` on this
+    // same canvas in the bubble phase and only then starts tracking the drag on
+    // the window, so stopping it here is what suspends panning (see
+    // setLassoMode). The rest are ordinary bubble-phase listeners.
+    canvas.addEventListener("pointerdown", this.onLassoDown, { capture: true });
+    canvas.addEventListener("pointermove", this.onLassoMove);
+    canvas.addEventListener("pointerup", this.onLassoUp);
+    canvas.addEventListener("pointercancel", this.onLassoCancel);
+  }
+
+  // ---------- freehand selection ----------
+
+  /**
+   * Turn freehand selection on or off. The drag has one meaning at a time: while
+   * this is on it draws an outline, and panning is left to the wheel, the arrow
+   * keys and the zoom controls.
+   *
+   * The drag is taken away from deck by swallowing `pointerdown` (see
+   * onLassoDown) rather than by handing it `dragPan: false`. Reconfiguring the
+   * controller does not work here, and fails in a way that outlives the mode:
+   * deck applies a changed `controller` prop by writing it onto the first View
+   * and letting ViewManager notice, but ViewManager diffs views with
+   * `view.equals`, which short-circuits on identity. The same OrthographicView
+   * instance is passed every time, so the write is seen as no change and the
+   * live controller keeps its old flag — until something unrelated marks the
+   * view manager dirty, which then applies whatever was last written. In
+   * practice that meant panning stayed on for the whole of the drawing gesture
+   * and was then switched off by the very view-state change that gesture
+   * caused, leaving the map unpannable after the mode had been left.
+   */
+  setLassoMode(on: boolean): void {
+    if (this.lassoMode === on) return;
+    this.lassoMode = on;
+    this.discardLasso();
+    // deck re-asserts its own cursor on the next pointer move, by which time it
+    // agrees with this; setting it here is what makes the mode visible at once.
+    this.canvas.style.cursor = on ? "crosshair" : "grab";
+  }
+
+  /** Abandon a gesture in progress, leaving the mode as it is. */
+  cancelLasso(): void {
+    if (this.lassoWorld.length === 0 && !this.lassoDrawing) return;
+    this.discardLasso();
+    this.draw();
+    this.cb.onLasso?.([], false);
+  }
+
+  private discardLasso(): void {
+    this.lassoDrawing = false;
+    this.lassoWorld = [];
+    this.lassoScreen = [];
+  }
+
+  private onLassoDown = (e: PointerEvent): void => {
+    if (!this.lassoMode || e.button !== 0) return;
+    // Deck's controller never learns the drag began, so it cannot pan through
+    // it. That is not only about feel: the outline is accumulated in world
+    // coordinates, so a camera that moved mid-gesture would smear the polygon
+    // against the points and select the wrong tracks.
+    e.stopImmediatePropagation();
+    this.discardLasso();
+    this.lassoDrawing = true;
+    // Capture, so an outline drawn off the edge of the canvas still finishes on
+    // release instead of being left open forever. Not worth abandoning the
+    // gesture over: without it a release outside the canvas is simply missed.
+    try {
+      this.canvas.setPointerCapture(e.pointerId);
+    } catch {
+      /* no capture available for this pointer */
+    }
+    this.appendLassoPoint(e, true);
+    e.preventDefault();
+  };
+
+  private onLassoMove = (e: PointerEvent): void => {
+    if (!this.lassoDrawing) return;
+    if (!this.appendLassoPoint(e)) return;
+    this.draw();
+    this.cb.onLasso?.(this.lassoSelection(), false);
+  };
+
+  private onLassoUp = (e: PointerEvent): void => {
+    if (!this.lassoDrawing) return;
+    this.lassoDrawing = false;
+    this.appendLassoPoint(e, true);
+    const caught = this.lassoSelection();
+    // The outline has said what it was for; leaving it on the map would only
+    // obscure the tracks it just named.
+    this.discardLasso();
+    this.draw();
+    this.cb.onLasso?.(caught, true);
+  };
+
+  private onLassoCancel = (): void => {
+    if (!this.lassoDrawing) return;
+    this.cancelLasso();
+  };
+
+  /** Screen position, thinned, then kept in world units. Reports whether it grew. */
+  private appendLassoPoint(e: PointerEvent, force = false): boolean {
+    const rect = this.canvas.getBoundingClientRect();
+    const screen: Point = [e.clientX - rect.left, e.clientY - rect.top];
+    if (!force && !shouldAppend(this.lassoScreen, screen)) return false;
+    const viewport = this.deck.getViewports()[0];
+    if (!viewport) return false;
+    const [x, y] = viewport.unproject(screen);
+    this.lassoScreen.push(screen);
+    this.lassoWorld.push([x, y]);
+    return true;
+  }
+
+  private lassoSelection(): number[] {
+    const s = this.state;
+    if (!s || this.lassoWorld.length < LASSO_MIN_POINTS) return [];
+    return indicesInPolygon(s.coords, this.lassoWorld, s.tracks.length);
+  }
+
+  /** The outline being drawn, above the map and below nothing. */
+  private lassoLayers(): Layer[] {
+    if (this.lassoWorld.length < LASSO_MIN_POINTS) return [];
+    const [r, g, b] = LASSO_COLOR[this.theme];
+    return [
+      new PolygonLayer<Point[]>({
+        id: "lasso",
+        data: [this.lassoWorld],
+        getPolygon: (p: Point[]) => p,
+        filled: true,
+        stroked: true,
+        getFillColor: [r, g, b, 26],
+        getLineColor: [r, g, b, 220],
+        getLineWidth: 1.5,
+        lineWidthUnits: "pixels",
+        pickable: false,
+        // The path grows on every captured point, and deck compares data by
+        // reference: without this the outline would freeze at its first frame.
+        updateTriggers: { getPolygon: this.lassoWorld.length },
+      }),
+    ];
   }
 
   setData(state: ScatterState): void {
     this.state = state;
-    // Row indices belong to the layout that just went away.
+    // Row indices and world positions belong to the layout that just went away.
     this.hovered = null;
+    this.discardLasso();
     this.stopPulse();
     const decades = new Set<number>();
     for (const t of state.tracks) {
@@ -257,6 +436,26 @@ export class Scatter {
   setGaps(gaps: GapMarker[]): void {
     this.gaps = gaps;
     this.update();
+  }
+
+  /**
+   * Where every laid-out point currently sits on screen, as one box in canvas
+   * pixels. Outside it the map holds nothing, which is the only honest way for a
+   * test to name a pixel a gesture should catch nothing at: the last one to
+   * presume an empty corner picked one the legend was sitting on.
+   */
+  screenBounds(): Bounds | null {
+    const b = this.dataBounds;
+    if (!b) return null;
+    const a = this.project(b.minX, b.minY);
+    const c = this.project(b.maxX, b.maxY);
+    if (!a || !c) return null;
+    return {
+      minX: Math.min(a[0], c[0]),
+      minY: Math.min(a[1], c[1]),
+      maxX: Math.max(a[0], c[0]),
+      maxY: Math.max(a[1], c[1]),
+    };
   }
 
   /** World → screen, for anchoring HTML popovers to points. */
@@ -369,6 +568,7 @@ export class Scatter {
     const cy = (minY + maxY) / 2;
     const span = Math.max(maxX - minX, maxY - minY) || 1;
     this.span = span;
+    this.dataBounds = { minX, minY, maxX, maxY };
     this.fitted = {
       ...this.viewState,
       target: [cx, cy, 0],
@@ -579,6 +779,7 @@ export class Scatter {
           getColor: [gapRgb[0], gapRgb[1], gapRgb[2], 255],
           getTextAnchor: "middle",
           getAlignmentBaseline: "center",
+          fontFamily: "DM Mono, monospace",
           characterSet: "0123456789",
           pickable: false,
           updateTriggers: { getColor: [this.theme] },
@@ -632,7 +833,9 @@ export class Scatter {
   }
 
   private draw(): void {
-    this.deck.setProps({ layers: [...this.baseLayers, ...this.hoverLayers()] });
+    this.deck.setProps({
+      layers: [...this.baseLayers, ...this.hoverLayers(), ...this.lassoLayers()],
+    });
   }
 
   /**

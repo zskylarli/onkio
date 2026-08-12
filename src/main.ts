@@ -6,6 +6,12 @@ import { buildFeatureMatrix } from "./features/matrix";
 import { Scatter, type ColorMode, type Theme } from "./render/scatter";
 import { EnrichmentQueue } from "./enrich/queue";
 import { DspPool, type AudioSource } from "./dsp/pool";
+import {
+  ANALYSIS_IDLE_LABEL,
+  ANALYSIS_STOP_LABEL,
+  analysisLookupTargets,
+  analysisTargets,
+} from "./dsp/analysisControl";
 import { getSourceStats } from "./enrich/adapter";
 import {
   setSongBpmApiKey,
@@ -43,11 +49,14 @@ import {
 } from "./local/match";
 import {
   evaluateSet,
+  moveItem,
+  orderForSet,
   suggestNext,
   toM3U8,
   toTextTracklist,
 } from "./views/setBuilder";
 import { summarizeClusters, tasteReport } from "./views/taste";
+import { demoCollectionUrl, demoImportFile } from "./util/demo";
 import {
   ensureCollections,
   mergeLibraries,
@@ -58,6 +67,7 @@ import {
 } from "./collections/merge";
 import {
   collectionCoverage,
+  describeLabelInfluence,
   describeOutstanding,
   describeSoundInfluence,
   needsLookup,
@@ -92,13 +102,13 @@ let clusterLabels = new Map<number, string>();
 let pidToIndex = new Map<string, number>();
 let scatter: Scatter | null = null;
 let queue: EnrichmentQueue | null = null;
-let queueRunning = false;
+let lookupRemaining = 0;
+let lookupSettled: Promise<void> = Promise.resolve();
 let dspPool: DspPool | null = null;
 const setList: Track[] = [];
 let suggestionMode = false;
 let gaps: Gap[] = [];
 let gapsVisible = false;
-let legendVisible = true;
 
 /** the library as it was before the last import, so an import is reversible */
 let previousLibrary: Library | null = null;
@@ -192,6 +202,8 @@ document.addEventListener("keydown", (e) => {
   const el = e.target as HTMLElement | null;
   if (el && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) return;
   if (e.key === "[") setSidebarCollapsed(!$("app").classList.contains("sidebar-collapsed"));
+  // The set panel is the right-hand bracket to the left-hand panel's "[".
+  if (e.key === "]") setPanelOpen(!setPanelIsOpen());
   // "=" is the unshifted key "+" lives on, so both spellings zoom in.
   if (e.key === "+" || e.key === "=") scatter?.zoomBy(1);
   if (e.key === "-" || e.key === "_") scatter?.zoomBy(-1);
@@ -200,6 +212,9 @@ document.addEventListener("keydown", (e) => {
     closeTrackPopover();
     closeGapPopover();
     dismissInfoPopups();
+    // Drawing is a mode, and a mode needs a way out that is not the button that
+    // started it, since while it is on the map does not pan.
+    if (lassoMode) setLassoMode(false);
   }
 });
 
@@ -229,6 +244,50 @@ fileDrop.addEventListener("drop", (e) => {
   const files = e.dataTransfer?.files;
   if (files?.length) void importFiles([...files]);
 });
+
+// ---------- demo collection ----------
+
+const demoBtn = $<HTMLButtonElement>("demo-load");
+const demoLabel = $("demo-load-label");
+const DEMO_LABEL = demoLabel.textContent ?? "Load the demo collection";
+
+demoBtn.addEventListener("click", () => void loadDemoCollection());
+
+/**
+ * The bundled export goes through `importFiles` like anything the user picks,
+ * so the add/replace choice, the collection metadata, the coverage rows and
+ * the undo all behave the same way. Wrapping the fetched bytes in a `File` is
+ * the whole of the difference.
+ */
+async function loadDemoCollection(): Promise<void> {
+  const status = $("import-status");
+  setDemoBusy(true);
+  status.textContent = "Fetching the demo collection…";
+  try {
+    const res = await fetch(demoCollectionUrl(import.meta.env.BASE_URL));
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`.trim());
+    await importFiles([demoImportFile(await res.blob())]);
+  } catch (err) {
+    // A missing file in a deployment looks exactly like a working button that
+    // does nothing, which is the one outcome worth spelling out.
+    status.textContent =
+      `The demo collection could not be fetched (${err instanceof Error ? err.message : String(err)}). ` +
+      "It ships with the site, so this usually means the deployment is missing the file.";
+  } finally {
+    setDemoBusy(false);
+  }
+}
+
+/**
+ * The fetch is the slow half and can be slow enough to look like nothing
+ * happened, so the button says what it is doing rather than only greying out:
+ * colour alone is nothing to a screen reader, and the name is what gets read.
+ */
+function setDemoBusy(busy: boolean): void {
+  demoBtn.disabled = busy;
+  demoBtn.setAttribute("aria-busy", String(busy));
+  demoLabel.textContent = busy ? "Loading the demo collection…" : DEMO_LABEL;
+}
 
 /**
  * Several files dropped together are imported one after another, not in
@@ -452,9 +511,8 @@ async function onLibraryLoaded(input: Library): Promise<void> {
   matchLocalFiles();
 
   queue = new EnrichmentQueue(onTrackEnriched, (remaining) => {
-    $("enrich-status").textContent = queueRunning
-      ? `${remaining.toLocaleString()} tracks remaining`
-      : "paused";
+    lookupRemaining = remaining;
+    if (analysisRunning) renderAnalysisProgress();
     if (remaining === 0) {
       renderCoverage();
       renderLegend();
@@ -462,7 +520,8 @@ async function onLibraryLoaded(input: Library): Promise<void> {
     }
   });
   await queue.init(lib.tracks);
-  $("enrich-status").textContent = `${queue.remaining.toLocaleString()} tracks queued`;
+  lookupRemaining = queue.remaining;
+  renderAnalysisIdle();
 
   runEmbedding();
 }
@@ -510,8 +569,7 @@ function renderLocalStatus(): void {
 
     case "none":
       pick.textContent = "Choose music folder";
-      status.textContent =
-        "No folder chosen. Tracks play from a 30-second preview where one exists.";
+      status.textContent = "No folder chosen";
       return;
 
     case "needs-permission":
@@ -928,6 +986,7 @@ function runEmbedding(): void {
   const matrix = buildFeatureMatrix(library.tracks, library.playlists, {
     semanticWeight: parseInt($<HTMLInputElement>("semantic-slider").value, 10) / 100,
     timbreWeight: parseInt($<HTMLInputElement>("timbre-slider").value, 10) / 100,
+    labelWeight: parseInt($<HTMLInputElement>("label-slider").value, 10) / 100,
   });
 
   embedWorker?.terminate();
@@ -971,6 +1030,7 @@ function onEmbeddingReady(): void {
         repositionPopovers();
         updatePriority();
       },
+      onLasso: handleLasso,
     });
     scatter.setTheme(currentTheme());
   }
@@ -996,14 +1056,8 @@ function updatePriority(): void {
     if (!scatter || !library) return;
     const visible = scatter.visiblePids();
     queue?.setPriority(visible, library.playlists.flatMap((p) => p.pids));
-    const byPid = new Set(visible);
-    const pending = library.tracks.filter(
-      (t) => byPid.has(t.pid) && (!t.bpm || !t.key)
-    ).length;
-    if (!dspRunning) {
-      $("dsp-status").textContent = pending
-        ? `${pending.toLocaleString()} in view need analysis`
-        : "nothing in view needs analysis";
+    if (!analysisRunning) {
+      renderAnalysisIdle();
     }
   }, 250);
 }
@@ -1030,20 +1084,6 @@ function onTrackEnriched(t: Track): void {
   if (popoverTrack && t.pid === popoverTrack.pid) renderTrackPopover();
 }
 
-$("enrich-toggle").addEventListener("click", () => {
-  if (!queue) return;
-  if (queueRunning) {
-    queue.stop();
-    queueRunning = false;
-    $("enrich-toggle").textContent = "Start lookups";
-    $("enrich-status").textContent = "paused";
-  } else {
-    queueRunning = true;
-    $("enrich-toggle").textContent = "Pause lookups";
-    void queue.start();
-  }
-});
-
 const gsbInput = $<HTMLInputElement>("gsb-key");
 gsbInput.value = getSongBpmApiKey() ?? "";
 gsbInput.addEventListener("change", () => setSongBpmApiKey(gsbInput.value));
@@ -1052,15 +1092,52 @@ const gsbProxyInput = $<HTMLInputElement>("gsb-proxy");
 gsbProxyInput.value = getSongBpmProxy() ?? "";
 gsbProxyInput.addEventListener("change", () => setSongBpmProxy(gsbProxyInput.value));
 
-// ---------- DSP (§4 stage 2) ----------
+// ---------- combined sound + DSP analysis (§4 stage 2) ----------
 
 /**
- * Analysis is on-demand and scoped to the viewport. Previously this was gated
- * to dance/electronic genres, which meant a pop-heavy library got zero
- * analysis and a status line reading "done — 0 analyzed"; genre now only
- * informs the half-time suspicion check, never whether we look at all.
+ * Analysis is on-demand and scoped to the viewport. One decoded audio excerpt
+ * yields timbre, BPM, and key, so sound preview analysis and missing-metadata
+ * analysis share one queue and one lifecycle.
  */
-let dspRunning = false;
+let analysisRunning = false;
+let analysisRun = 0;
+let analysisAbort: AbortController | null = null;
+let audioDone = 0;
+let audioTotal = 0;
+let soundResolved = 0;
+let soundTotal = 0;
+let metadataResolved = 0;
+let metadataTotal = 0;
+
+function renderAnalysisProgress(): void {
+  const parts: string[] = [];
+  if (lookupRemaining > 0) {
+    parts.push(`${lookupRemaining.toLocaleString()} online lookups remaining`);
+  } else {
+    parts.push("online lookups complete");
+  }
+  if (audioTotal > 0) {
+    parts.push(`${audioDone.toLocaleString()} / ${audioTotal.toLocaleString()} audio`);
+  }
+  $("dsp-status").textContent = parts.join(" · ");
+}
+
+function renderAnalysisIdle(): void {
+  if (!library) return;
+  const pending = analysisTargets(
+    library.tracks,
+    scatter?.visiblePids() ?? []
+  ).length;
+  const online = analysisLookupTargets(library.tracks).length;
+  const parts: string[] = [];
+  if (online > 0) {
+    parts.push(`${online.toLocaleString()} need online analysis`);
+  }
+  if (pending > 0) {
+    parts.push(`${pending.toLocaleString()} in view need audio analysis`);
+  }
+  $("dsp-status").textContent = parts.join(" · ") || "nothing needs analysis";
+}
 
 /**
  * The audio to analyze, best first. A local file beats a preview twice over: it
@@ -1087,13 +1164,17 @@ async function analysisSource(t: Track): Promise<AudioSource | null> {
  * is done: a viewport of full tracks left as live blob URLs would exhaust
  * memory long before the pass finished.
  */
-async function analyzeTrack(t: Track): Promise<boolean> {
+async function analyzeTrack(t: Track, signal?: AbortSignal): Promise<boolean> {
   const source = await analysisSource(t);
   if (!source) return false;
+  if (signal?.aborted) {
+    if (source.kind === "file") URL.revokeObjectURL(source.url);
+    return false;
+  }
   dspPool ??= new DspPool();
   try {
-    const r = await dspPool.analyze(t, source);
-    return !!r && DspPool.apply(t, r);
+    const r = await dspPool.analyze(t, source, signal);
+    return !!r && !signal?.aborted && DspPool.apply(t, r);
   } finally {
     if (source.kind === "file") URL.revokeObjectURL(source.url);
   }
@@ -1101,113 +1182,90 @@ async function analyzeTrack(t: Track): Promise<boolean> {
 
 $("dsp-start").addEventListener("click", async () => {
   if (!library) return;
-  if (dspRunning) {
-    dspRunning = false; // second click cancels
-    return;
-  }
-
-  const byPid = new Map(library.tracks.map((t) => [t.pid, t]));
-  const targets = scatter
-    ? (scatter.visiblePids().map((p) => byPid.get(p)!).filter((t) => t && (!t.bpm || !t.key)))
-    : [];
-
-  const status = $("dsp-status");
-  if (targets.length === 0) {
-    status.textContent = "Nothing in view needs analysis.";
-    return;
-  }
-
-  dspRunning = true;
   const button = $("dsp-start");
-  button.textContent = "Stop analyzing";
-  let done = 0;
-  let found = 0;
-
-  for (const t of targets) {
-    if (!dspRunning) break;
-    if (await analyzeTrack(t)) {
-      found++;
-      scatter?.update();
-      if (popoverTrack?.pid === t.pid) renderTrackPopover();
-    }
-    done++;
-    status.textContent = `${done} / ${targets.length} · ${found} resolved`;
-    if (done % 20 === 0) {
-      void saveLibrary(library);
-      renderCoverage();
-      renderLegend();
-    }
+  const status = $("dsp-status");
+  if (analysisRunning) {
+    analysisRunning = false;
+    analysisRun++;
+    analysisAbort?.abort();
+    analysisAbort = null;
+    queue?.stop();
+    button.textContent = ANALYSIS_IDLE_LABEL;
+    status.textContent = "stopped";
+    return;
   }
+
+  const targets = analysisTargets(library.tracks, scatter?.visiblePids() ?? []);
+  const lookupTargets = analysisLookupTargets(library.tracks);
+  const lookupTotal = lookupTargets.length;
+
+  if (targets.length === 0 && lookupTotal === 0) {
+    status.textContent = "nothing needs analysis";
+    return;
+  }
+
+  const run = ++analysisRun;
+  const controller = new AbortController();
+  analysisAbort = controller;
+  analysisRunning = true;
+  button.textContent = ANALYSIS_STOP_LABEL;
+  audioDone = 0;
+  audioTotal = targets.length;
+  soundResolved = 0;
+  metadataResolved = 0;
+  lookupRemaining = lookupTotal;
+  soundTotal = targets.filter((target) => target.needsSound).length;
+  metadataTotal = targets.filter((target) => target.needsMetadata).length;
+  renderAnalysisProgress();
+
+  // A stopped queue may still be waiting for its one in-flight network request
+  // to settle. Serialize restarts so the same queue is never started twice.
+  const previousLookups = lookupSettled;
+  const lookupWork = previousLookups
+    .catch(() => undefined)
+    .then(async () => {
+      if (!analysisRunning || run !== analysisRun || !queue) return;
+      queue.refill(lookupTargets);
+      lookupRemaining = queue.remaining;
+      await queue.start();
+    });
+  lookupSettled = lookupWork.catch(() => undefined);
+
+  const audioWork = (async () => {
+    for (const target of targets) {
+      if (!analysisRunning || run !== analysisRun) break;
+      const changed = await analyzeTrack(target.track, controller.signal);
+      if (run !== analysisRun) return;
+      if (changed) {
+        scatter?.update();
+        if (popoverTrack?.pid === target.track.pid) renderTrackPopover();
+      }
+      if (target.needsSound && target.track.timbre) soundResolved++;
+      if (target.needsMetadata && target.track.bpm && target.track.key) metadataResolved++;
+      audioDone++;
+      renderAnalysisProgress();
+      if (audioDone % 20 === 0) {
+        void saveLibrary(library);
+        renderCoverage();
+        renderLegend();
+      }
+    }
+  })();
+
+  await Promise.all([lookupWork, audioWork]);
+  if (run !== analysisRun) return;
 
   void saveLibrary(library);
   renderCoverage();
   renderLegend();
-  status.textContent = dspRunning
-    ? `done — ${found} of ${targets.length} resolved`
-    : `stopped — ${found} resolved`;
-  dspRunning = false;
-  button.textContent = "Analyze what's in view";
-});
-
-/**
- * Sound analysis: fetch a preview and measure its timbre, for tracks we
- * haven't heard yet. Scoped to the viewport because iTunes rate-limits at
- * roughly 20 lookups a minute — a whole crate is an hour of wall clock, so
- * this is meant to be run repeatedly on the region you care about. Progress
- * is saved as it goes and resumes on the next run.
- */
-let soundRunning = false;
-
-$("sound-analyze").addEventListener("click", async () => {
-  if (!library) return;
-  const button = $("sound-analyze");
-  if (soundRunning) {
-    soundRunning = false; // second click cancels
-    return;
-  }
-
-  const byPid = new Map(library.tracks.map((t) => [t.pid, t]));
-  const targets = (scatter?.visiblePids() ?? [])
-    .map((p) => byPid.get(p))
-    .filter((t): t is Track => !!t && !t.timbre);
-
-  const status = $("sound-status");
-  if (targets.length === 0) {
-    status.textContent = "Everything in view has been analyzed.";
-    return;
-  }
-
-  soundRunning = true;
-  button.textContent = "Stop analyzing";
-  let done = 0;
-  let heard = 0;
-
-  for (const t of targets) {
-    if (!soundRunning) break;
-    if (await analyzeTrack(t)) {
-      if (t.timbre) heard++;
-      scatter?.update();
-      if (popoverTrack?.pid === t.pid) renderTrackPopover();
-    }
-    done++;
-    status.textContent = `${done} / ${targets.length} · heard ${heard}`;
-    if (done % 20 === 0) {
-      void saveLibrary(library);
-      renderCoverage();
-    }
-  }
-
-  void saveLibrary(library);
-  renderCoverage();
   status.textContent =
-    (soundRunning ? "done" : "stopped") +
-    ` — heard ${heard} of ${done}` +
-    (heard < done
-      ? `; ${done - heard} had neither a local file nor a preview${musicFolder ? "" : ". Connecting a music folder reaches the rest"}`
-      : "") +
-    ". Open 'Sound influence (advanced)' to use it.";
-  soundRunning = false;
-  button.textContent = "Analyze sound in view";
+    `done — ${(lookupTotal - lookupRemaining).toLocaleString()} online lookups` +
+    ` · ${audioDone.toLocaleString()} audio analyzed` +
+    (soundTotal ? ` · sound ${soundResolved} / ${soundTotal}` : "") +
+    (metadataTotal ? ` · BPM/key ${metadataResolved} / ${metadataTotal}` : "");
+  analysisRunning = false;
+  analysisAbort = null;
+  button.textContent = ANALYSIS_IDLE_LABEL;
 });
 
 /** Analyze a single track immediately — used when you pin or queue one. */
@@ -1295,6 +1353,7 @@ function renderCoverage(): void {
       head +
       coverageRow("BPM", r.bpm, r.total) +
       coverageRow("Key", r.key, r.total) +
+      coverageRow("Label", r.labelCount, r.total) +
       coverageRow("Sound", r.sound, r.total) +
       coverageRow("Preview", r.preview, r.total) +
       // Only meaningful once a folder is connected; otherwise it is a row of
@@ -1305,6 +1364,7 @@ function renderCoverage(): void {
   $("coverage").innerHTML = parts.join("");
   $("enrich-scope").textContent = describeOutstanding(rows);
   syncSoundInfluence(rows);
+  syncLabelInfluence(rows);
 
   const stats = getSourceStats();
   $("source-stats").innerHTML = Object.entries(stats)
@@ -1321,12 +1381,19 @@ function syncSoundInfluence(rows: CollectionCoverage[]): void {
   $("timbre-note").textContent = note;
 }
 
+function syncLabelInfluence(rows: CollectionCoverage[]): void {
+  const { enabled, note } = describeLabelInfluence(rows);
+  $<HTMLInputElement>("label-slider").disabled = !enabled;
+  $("label-note").textContent = note;
+}
+
 $("retry-misses").addEventListener("click", async () => {
   const removed = await clearCachedMisses();
-  $("source-stats").innerHTML = `<div>cleared ${removed.toLocaleString()} cached misses — start lookups again</div>`;
+  $("source-stats").innerHTML = `<div>cleared ${removed.toLocaleString()} cached misses — analyze songs again</div>`;
   if (library && queue) {
     queue.refill(library.tracks.filter(needsLookup));
-    $("enrich-status").textContent = `${queue.remaining.toLocaleString()} tracks requeued`;
+    lookupRemaining = queue.remaining;
+    renderAnalysisIdle();
   }
 });
 
@@ -1357,6 +1424,7 @@ function handleHover(track: Track | null, x: number, y: number): void {
       ${track.bpm ? `<span class="badge${track.bpmSuspect ? " warn" : ""}">${Math.round(track.bpm)} BPM${track.bpmSuspect ? " ⚠½×?" : ""}</span>` : ""}
       ${track.key ? `<span class="badge">${camelotDisplay(track.key)}</span>` : ""}
       ${track.genre ? `<span class="badge">${esc(track.genre)}</span>` : ""}
+      ${track.label ? `<span class="badge">${esc(track.label)}</span>` : ""}
       ${track.year ? `<span class="badge">${track.year}</span>` : ""}
       ${browsing ? `<span class="badge audio-badge">${isPlayable(track) ? (localByPid.has(track.pid) ? "file" : "preview") : "no audio"}</span>` : ""}
     </div>
@@ -1438,7 +1506,20 @@ function renderTrackPopover(): void {
 
   const hasFile = localByPid.has(t.pid);
   const sharedName = localResolution?.ambiguous.get(t.pid)?.length ?? 0;
-  const playable = hasFile ? "file" : t.previewUrl ? "preview" : null;
+  // Always offered, because whether audio exists is not known until it is asked
+  // for. A rekordbox export arrives with BPM and key filled, so the enrichment
+  // queue never visits it and no track ever gains a stored previewUrl, yet
+  // resolvePreviewUrl finds audio for these on demand perfectly well. The
+  // button used to be rendered only when a URL had already been stored, which
+  // on that library meant never.
+  const audio = hasFile
+    ? { label: "Play file", hint: "Play the file in your music folder" }
+    : t.previewUrl
+      ? { label: "Play preview", hint: "Play the 30-second preview" }
+      : {
+          label: "Find audio",
+          hint: "No preview has been looked up for this track yet. This goes and looks, which can take a few seconds.",
+        };
 
   const derived = (field: "bpm" | "key") => {
     const src = t.source?.[field];
@@ -1456,6 +1537,7 @@ function renderTrackPopover(): void {
     <div class="sub">${esc(t.artist ?? "Unknown artist")}${t.album ? " — " + esc(t.album) : ""}</div>
     <div>
       ${t.genre ? `<span class="badge">${esc(t.genre)}</span>` : ""}
+      ${t.label ? `<span class="badge">Label: ${esc(t.label)}</span>` : ""}
       ${t.year ? `<span class="badge">${t.year}</span>` : ""}
       ${t.durationMs ? `<span class="badge">${fmtDuration(t.durationMs)}</span>` : ""}
       ${t.bpmSuspect ? `<span class="badge warn">maybe half-time</span>` : ""}
@@ -1469,7 +1551,7 @@ function renderTrackPopover(): void {
     <div class="actions">
       <button id="ov-save" class="primary">Save edits</button>
       <button id="add-to-set">Add to set</button>
-      ${playable ? `<button id="play-audio">${playable === "file" ? "Play file" : "Play preview"}</button>` : ""}
+      <button id="play-audio" title="${esc(audio.hint)}">${audio.label}</button>
     </div>
     <div id="playback-note" class="small muted"></div>
   `;
@@ -1506,18 +1588,13 @@ function renderTrackPopover(): void {
     renderSet();
   });
 
-  $("add-to-set").addEventListener("click", () => {
-    setList.push(t);
-    renderSet();
-    // A track in a set needs BPM and key to be mixable at all, so earn them now.
-    void analyzeOne(t);
-  });
+  $("add-to-set").addEventListener("click", () => appendToSet(t));
 
-  if (playable) {
-    // Explicit, so it plays regardless of Browsing mode and pointer movement
-    // afterwards does not silence it.
-    $("play-audio").addEventListener("click", () => void playTrack(t, "click"));
-  }
+  // Explicit, so it plays regardless of Browsing mode and pointer movement
+  // afterwards does not silence it. playTrack reports "finding audio" while it
+  // resolves and distinguishes "no preview found" from "preview unavailable"
+  // after, which is the whole of what a track nobody has looked up can be told.
+  $("play-audio").addEventListener("click", () => void playTrack(t, "click"));
 
   renderPlayback();
 
@@ -1660,16 +1737,33 @@ function openGapPopover(index: number): void {
 
 // ---------- legend ----------
 
-$("legend-toggle").addEventListener("click", () => {
-  legendVisible = !legendVisible;
-  renderLegend();
+const LEGEND_KEY = "onkio.legend";
+
+/**
+ * The legend puts itself away rather than being switched off from the toolbar.
+ * It collapses to its own title bar instead of vanishing, because the control
+ * that brings it back lives on it: hiding it outright would leave no way in.
+ */
+function setLegendCollapsed(collapsed: boolean): void {
+  $("legend").classList.toggle("collapsed", collapsed);
+  localStorage.setItem(LEGEND_KEY, collapsed ? "collapsed" : "expanded");
+  const btn = $("legend-collapse");
+  btn.textContent = collapsed ? "▸" : "▾";
+  btn.title = collapsed ? "Show the legend" : "Minimize the legend";
+  btn.setAttribute("aria-label", btn.title);
+  btn.setAttribute("aria-expanded", String(!collapsed));
+}
+
+setLegendCollapsed(localStorage.getItem(LEGEND_KEY) === "collapsed");
+
+$("legend-collapse").addEventListener("click", () => {
+  setLegendCollapsed(!$("legend").classList.contains("collapsed"));
 });
 
 function renderLegend(): void {
   const el = $("legend");
   const entries = scatter?.legendEntries() ?? [];
-  setToggleState("legend-toggle", legendVisible && entries.length > 0);
-  if (!legendVisible || entries.length === 0) {
+  if (entries.length === 0) {
     el.hidden = true;
     return;
   }
@@ -1700,6 +1794,36 @@ function renderLegend(): void {
 
 // ---------- set builder (§7.1) ----------
 
+const SET_PANEL_KEY = "onkio.setPanel";
+
+/**
+ * The set builder is a panel rather than a tab because building a set is done
+ * against the map: as a tab it hid the thing every entry comes from, so adding a
+ * track meant leaving the map, and a lasso would have had nowhere to land.
+ */
+function setPanelOpen(open: boolean): void {
+  $("app").classList.toggle("set-open", open);
+  $("set-panel").hidden = !open;
+  setToggleState("set-toggle", open);
+  $("set-toggle").setAttribute("aria-expanded", String(open));
+  localStorage.setItem(SET_PANEL_KEY, open ? "shown" : "hidden");
+  // The map's column just changed width; the canvas follows, and so must
+  // anything anchored to a point in it. The sparkline is sized from its box.
+  requestAnimationFrame(() => {
+    repositionPopovers();
+    drawSparkline();
+  });
+}
+
+function setPanelIsOpen(): boolean {
+  return $("app").classList.contains("set-open");
+}
+
+setPanelOpen(localStorage.getItem(SET_PANEL_KEY) === "shown");
+
+$("set-toggle").addEventListener("click", () => setPanelOpen(!setPanelIsOpen()));
+$("set-close").addEventListener("click", () => setPanelOpen(false));
+
 $("suggest-toggle").addEventListener("change", (e) => {
   suggestionMode = (e.target as HTMLInputElement).checked;
   applyHighlight();
@@ -1708,6 +1832,88 @@ $("set-clear").addEventListener("click", () => {
   setList.length = 0;
   renderSet();
 });
+
+/** Append one deliberate choice, and show the panel it landed in. */
+function appendToSet(t: Track): void {
+  setList.push(t);
+  renderSet();
+  setPanelOpen(true);
+  // A track in a set needs BPM and key to be mixable at all, so earn them now.
+  void analyzeOne(t);
+}
+
+// ---------- lasso ----------
+
+/**
+ * How many fresh tracks a single lasso may kick analysis off for. A region can
+ * hold hundreds, and each one that is missing BPM or key costs a lookup and an
+ * audio fetch; a gesture meant to fill a set should not become a download queue.
+ */
+const LASSO_ANALYZE_LIMIT = 12;
+
+let lassoMode = false;
+let lassoFeedbackTimer: number | undefined;
+
+function setLassoMode(on: boolean): void {
+  lassoMode = on;
+  setToggleState("lasso-toggle", on);
+  scatter?.setLassoMode(on);
+  // How to draw is on the button, as a tooltip. What a gesture found is not: it
+  // is news, and it is only news for as long as the gesture is recent.
+  setLassoFeedback(null);
+}
+
+/**
+ * The live count while a loop is being drawn, and the outcome once it lands.
+ * "Nothing inside that loop" in particular is the only thing separating a
+ * gesture that caught nothing from a control that did nothing, so it is spoken
+ * as well as shown.
+ */
+function setLassoFeedback(text: string | null, holdMs = 0): void {
+  window.clearTimeout(lassoFeedbackTimer);
+  const el = $("lasso-feedback");
+  el.textContent = text ?? "";
+  el.hidden = text === null;
+  if (text !== null && holdMs > 0) {
+    lassoFeedbackTimer = window.setTimeout(() => setLassoFeedback(null), holdMs);
+  }
+}
+
+$("lasso-toggle").addEventListener("click", () => setLassoMode(!lassoMode));
+
+/**
+ * A drawn region, turned into set entries. Tracks already in the set are left
+ * alone rather than added twice: a lasso is a gesture at a neighbourhood, and
+ * two overlapping sweeps are how it is normally used.
+ */
+function handleLasso(indices: number[], done: boolean): void {
+  if (!library) return;
+  if (!done) {
+    setLassoFeedback(indices.length > 0 ? counted(indices.length, "track") : null);
+    return;
+  }
+  if (indices.length === 0) {
+    setLassoFeedback("Nothing inside that loop", 2400);
+    return;
+  }
+  const present = new Set(setList.map((t) => t.pid));
+  const fresh = indices.map((i) => library!.tracks[i]).filter((t) => !present.has(t.pid));
+  const already = indices.length - fresh.length;
+  if (fresh.length === 0) {
+    setLassoFeedback(`${counted(already, "track")} already in the set`, 2600);
+    return;
+  }
+  setList.push(...orderForSet(fresh));
+  renderSet();
+  setPanelOpen(true);
+  for (const t of fresh.filter((t) => !t.bpm || !t.key).slice(0, LASSO_ANALYZE_LIMIT)) {
+    void analyzeOne(t);
+  }
+  setLassoFeedback(
+    `Added ${counted(fresh.length, "track")}${already > 0 ? `, ${already} already there` : ""}`,
+    2600
+  );
+}
 $("export-m3u8").addEventListener("click", () => {
   const blob = new Blob([toM3U8(setList)], { type: "audio/x-mpegurl" });
   const a = document.createElement("a");
@@ -1721,6 +1927,21 @@ $("export-text").addEventListener("click", async () => {
   $("export-text").textContent = "Copied!";
   setTimeout(() => ($("export-text").textContent = "Copy tracklist"), 1200);
 });
+
+/** The row being dragged, by its index at the time the drag started. */
+let dragFrom: number | null = null;
+
+/** Reorder in place: `setList` is shared, and callers hold the reference. */
+function reorderSet(from: number, to: number): void {
+  const next = moveItem(setList, from, to);
+  setList.splice(0, setList.length, ...next);
+}
+
+function clearDropMarks(): void {
+  for (const el of document.querySelectorAll("#set-list li")) {
+    el.classList.remove("drop-before", "drop-after", "dragging");
+  }
+}
 
 function renderSet(): void {
   const list = $("set-list");
@@ -1736,26 +1957,103 @@ function renderSet(): void {
         return w.kind === "key-unknown" ? "key unknown" : "bpm unknown";
       })
       .join(" · ");
+    li.draggable = true;
+    // Reachable and movable without a pointer: a drag-only reorder cannot be
+    // done by keyboard at all, and Alt+arrows are what list editors bind.
+    li.tabIndex = 0;
+    li.title = "Drag to move, or hold Alt and press ↑ or ↓";
     li.innerHTML = `
+      <span class="handle" aria-hidden="true">⠿</span>
       <div class="grow">
-        <div>${esc(t.artist ?? "?")} — ${esc(t.name)}</div>
-        <div class="muted small">${t.key ? camelotDisplay(t.key) : "?"} · ${t.bpm ? Math.round(t.bpm) + " BPM" : "?"}${t.source?.bpm ? " · " + esc(t.source.bpm) : ""}</div>
+        <div class="title">${esc(t.artist ?? "?")} — ${esc(t.name)}</div>
+        <div class="meta muted">${t.key ? camelotDisplay(t.key) : "?"} · ${t.bpm ? Math.round(t.bpm) + " BPM" : "?"}${t.source?.bpm ? " · " + esc(t.source.bpm) : ""}</div>
         ${warnText ? `<div class="warnings">⚠ ${warnText}</div>` : ""}
       </div>
-      <button class="remove" data-i="${i}">✕</button>
+      <button class="remove" title="Remove from the set" aria-label="Remove from the set">✕</button>
     `;
     li.querySelector(".remove")!.addEventListener("click", () => {
       setList.splice(i, 1);
       renderSet();
     });
+
+    li.addEventListener("dragstart", (e) => {
+      dragFrom = i;
+      li.classList.add("dragging");
+      // Firefox starts no drag at all without payload, and the move effect is
+      // what stops the cursor claiming a copy is being made.
+      e.dataTransfer?.setData("text/plain", t.pid);
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+    });
+    li.addEventListener("dragover", (e) => {
+      if (dragFrom === null) return;
+      e.preventDefault(); // the default is to refuse the drop
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+      const box = li.getBoundingClientRect();
+      const below = e.clientY > box.top + box.height / 2;
+      li.classList.toggle("drop-before", !below && dragFrom !== i);
+      li.classList.toggle("drop-after", below && dragFrom !== i);
+    });
+    li.addEventListener("dragleave", () => {
+      li.classList.remove("drop-before", "drop-after");
+    });
+    li.addEventListener("drop", (e) => {
+      if (dragFrom === null) return;
+      e.preventDefault();
+      const box = li.getBoundingClientRect();
+      const below = e.clientY > box.top + box.height / 2;
+      // The row is lifted out before it is put back, so a destination below the
+      // origin has already shifted up by one by the time it is inserted.
+      let to = i + (below ? 1 : 0);
+      if (dragFrom < to) to -= 1;
+      const from = dragFrom;
+      dragFrom = null;
+      clearDropMarks();
+      if (from === to) return;
+      reorderSet(from, to);
+      renderSet();
+      focusSetRow(to);
+    });
+    li.addEventListener("dragend", () => {
+      dragFrom = null;
+      clearDropMarks();
+    });
+
+    li.addEventListener("keydown", (e) => {
+      if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+      e.preventDefault();
+      const to = i + (e.key === "ArrowUp" ? -1 : 1);
+      if (to < 0 || to >= setList.length) return;
+      reorderSet(i, to);
+      renderSet();
+      focusSetRow(to);
+    });
+
     list.appendChild(li);
   });
+
+  const empty = setList.length === 0;
+  $("set-empty").hidden = !empty;
+  // A zero beside the name is noise; the count earns its place once there is one.
+  $("set-count").textContent = empty ? "" : String(setList.length);
+  for (const id of ["export-m3u8", "export-text", "set-clear"]) {
+    $<HTMLButtonElement>(id).disabled = empty;
+  }
   drawSparkline();
   applyHighlight();
 }
 
+/** Keep the moved row under the keyboard, since rendering replaced the element. */
+function focusSetRow(i: number): void {
+  const row = $("set-list").children[i];
+  if (row instanceof HTMLElement) row.focus();
+}
+
 function drawSparkline(): void {
   const canvas = $<HTMLCanvasElement>("sparkline");
+  // Sized from its box rather than from a fixed attribute, because the panel is
+  // narrower than the tab it replaced and a stale width stretches the drawing.
+  const width = Math.max(1, Math.round(canvas.clientWidth || canvas.width));
+  if (canvas.width !== width) canvas.width = width;
   const ctx = canvas.getContext("2d")!;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   const bpms = setList.map((t) => t.bpm ?? NaN);
@@ -1779,7 +2077,7 @@ function drawSparkline(): void {
   });
   ctx.stroke();
   ctx.fillStyle = css.getPropertyValue("--muted").trim() || "#8a93a6";
-  ctx.font = "10px system-ui";
+  ctx.font = '10px "DM Mono", monospace';
   ctx.fillText(`${Math.round(min + 5)}–${Math.round(max - 5)} BPM`, 10, 12);
 }
 
@@ -1802,6 +2100,10 @@ $<HTMLInputElement>("semantic-slider").addEventListener("change", () => {
 });
 
 $<HTMLInputElement>("timbre-slider").addEventListener("change", () => {
+  runEmbedding();
+});
+
+$<HTMLInputElement>("label-slider").addEventListener("change", () => {
   runEmbedding();
 });
 
@@ -2014,6 +2316,10 @@ void (async () => {
   await restoreMusicFolder();
 })();
 
+// The set starts empty, and the count, the empty note and the disabled exports
+// are all derived: one render establishes them rather than the markup guessing.
+renderSet();
+
 // persist on tab close so the queue resumes (§3.3)
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden" && library) void saveLibrary(library);
@@ -2047,8 +2353,13 @@ Object.assign(window, {
       })),
       theme: currentTheme(),
       browsing,
+      lasso: lassoMode,
+      setPanel: setPanelIsOpen(),
+      set: setList.map((t) => t.pid),
       playing: loadedAudio ? { pid: loadedAudio.pid, origin: loadedAudio.origin } : null,
       view: scatter?.getViewState(),
+      // Where the dots are on screen, so a gesture can be aimed at empty map.
+      dataBox: scatter?.screenBounds() ?? null,
       collections: (library?.collections ?? []).map((c) => ({
         id: c.id,
         label: c.label,

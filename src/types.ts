@@ -18,8 +18,10 @@ export type Track = {
   key?: string; // Camelot, e.g. "8A"
   confidence?: { bpm?: number; key?: number };
   tags?: string[];
-  /** Where bpm/key came from: 'rekordbox' | 'deezer' | 'dsp' | 'manual' */
-  source?: { bpm?: string; key?: string };
+  /** Record label / imprint, cleaned for display and vocabulary matching. */
+  label?: string;
+  /** Where bpm/key/label came from. */
+  source?: { bpm?: string; key?: string; label?: string };
   previewUrl?: string;
   /** Deezer's track id. Its preview URLs are signed and live 15 minutes, so the
    * id rather than the URL is what makes audio obtainable later (enrich/preview). */
@@ -65,11 +67,14 @@ export type Library = {
 export type FeatureLookup = {
   bpm?: number;
   key?: string;
+  label?: string;
   tags?: string[];
   previewUrl?: string;
   deezerId?: number;
   confidence?: { bpm?: number; key?: number };
   source?: string;
+  /** Source of label specifically; other lookup fields may come from another service. */
+  labelSource?: string;
 };
 
 export type EmbedPoint = {

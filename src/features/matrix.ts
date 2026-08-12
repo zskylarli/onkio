@@ -1,11 +1,13 @@
 import type { Playlist, Track } from "../types";
 import { keyVector } from "../music/camelot";
+import { labelKey } from "../enrich/label";
 
 /**
  * Feature matrix (§5). Blocks: playlist incidence (TF-IDF), genre one-hot
- * (IDF), external tags (TF-IDF), BPM (log + octave-folded), key (cyclic),
- * year, duration. Each block is RMS-scaled so none dominates the distance
- * metric (§5.2.2), then the numeric-vs-semantic slider (§5.3) reweights.
+ * (IDF), external tags (TF-IDF), label roster (IDF), BPM (log +
+ * octave-folded), key (cyclic), year, duration. Each block is RMS-scaled so
+ * none dominates the distance metric (§5.2.2), then the numeric-vs-semantic
+ * slider (§5.3) reweights.
  *
  * Sparsity mitigations (§5.2): TF-IDF on the incidence matrix and artist
  * propagation (a track inherits a weak mean of its artist's other tracks'
@@ -17,6 +19,7 @@ export type FeatureBlock =
   | "playlists"
   | "genre"
   | "tags"
+  | "label"
   | "artist"
   | "bpm"
   | "key"
@@ -32,6 +35,9 @@ export type MatrixOptions = {
   /** blend factor for artist propagation */
   artistBlend?: number;
   maxTagVocab?: number;
+  /** 0–1 influence of record-label roster signal on the semantic side. */
+  labelWeight?: number;
+  maxLabelVocab?: number;
   /** Blocks left out entirely. Excluded vocabularies cost no dimensions. */
   exclude?: readonly FeatureBlock[];
   /**
@@ -110,6 +116,28 @@ function scaleTimbreBlock(
   for (const r of rows) for (let c = from; c < to; c++) data[r * d + c] *= f;
 }
 
+/**
+ * Coverage-aware RMS for a sparse one-hot block. Standardization is
+ * deliberately absent: centering would make "no label" non-zero in every
+ * column and turn missingness into an active feature.
+ */
+function scaleSparseBlock(
+  data: Float32Array,
+  d: number,
+  from: number,
+  to: number,
+  rows: number[],
+  weight: number
+): void {
+  if (rows.length === 0 || weight === 0) return;
+  let ss = 0;
+  for (const r of rows) for (let c = from; c < to; c++) ss += data[r * d + c] ** 2;
+  const rms = Math.sqrt(ss / rows.length);
+  if (rms === 0) return;
+  const f = weight / rms;
+  for (const r of rows) for (let c = from; c < to; c++) data[r * d + c] *= f;
+}
+
 /** Case- and whitespace-insensitive artist identity, shared by the artist
  * block and by the vocabulary-overlap measurements in views/collections. */
 export function artistKey(t: Track): string | undefined {
@@ -126,6 +154,8 @@ export function buildFeatureMatrix(
   const timbreWeight = opts.timbreWeight ?? 0;
   const artistBlend = opts.artistBlend ?? 0.3;
   const maxTagVocab = opts.maxTagVocab ?? 200;
+  const labelWeight = opts.labelWeight ?? 0.75;
+  const maxLabelVocab = opts.maxLabelVocab ?? 200;
   const artistWeight = opts.artistWeight ?? 0;
   const maxArtistVocab = opts.maxArtistVocab ?? 200;
   const n = tracks.length;
@@ -159,6 +189,22 @@ export function buildFeatureMatrix(
   const tagIndex = new Map(tags.map((t, i) => [t, i]));
   const nTa = tags.length;
 
+  // A singleton label carries no relational information and only shifts one
+  // row's norm. Keep the roster spine, frequency-capped like the artist block.
+  const labelCounts = new Map<string, number>();
+  if (labelWeight > 0 && use("label"))
+    for (const t of tracks) {
+      const label = labelKey(t.label);
+      if (label) labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+    }
+  const labels = [...labelCounts.entries()]
+    .filter(([, count]) => count >= 2)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, maxLabelVocab)
+    .map(([label]) => label);
+  const labelIndex = new Map(labels.map((label, i) => [label, i]));
+  const nLa = labels.length;
+
   // Artist one-hot, capped by frequency. A singleton artist column carries no
   // relational information — it only shifts one row's norm — and the Jacobi
   // eigensolver is cubic in d, so the tail is not worth its cost.
@@ -183,7 +229,7 @@ export function buildFeatureMatrix(
     timbreWeight > 0 && use("timbre")
       ? tracks.find((t) => t.timbre && t.timbre.length > 0)?.timbre!.length ?? 0
       : 0;
-  const d = nPl + nGe + nTa + nAr + NUMERIC + nTi;
+  const d = nPl + nGe + nTa + nLa + nAr + NUMERIC + nTi;
   const data = new Float32Array(n * d);
 
   // --- IDF weights ---
@@ -192,12 +238,14 @@ export function buildFeatureMatrix(
   );
   const geIdf = genres.map((g) => Math.log(n / (genreCounts.get(g) ?? 1)));
   const taIdf = tags.map((t) => Math.log(n / (tagCounts.get(t) ?? 1)));
+  const laIdf = labels.map((label) => Math.log(n / (labelCounts.get(label) ?? 1)));
   const arIdf = artists.map((a) => Math.log(n / (artistCounts.get(a) ?? 1)));
 
   const OFF_PL = 0;
   const OFF_GE = nPl;
   const OFF_TA = nPl + nGe;
-  const OFF_AR = OFF_TA + nTa;
+  const OFF_LA = OFF_TA + nTa;
+  const OFF_AR = OFF_LA + nLa;
   const OFF_NU = OFF_AR + nAr;
   const OFF_TI = OFF_NU + NUMERIC;
 
@@ -219,6 +267,7 @@ export function buildFeatureMatrix(
 
   // --- fill rows ---
   const timbreRows: number[] = [];
+  const labelRows: number[] = [];
   for (let r = 0; r < n; r++) {
     const t = tracks[r];
     const row = r * d;
@@ -234,6 +283,14 @@ export function buildFeatureMatrix(
     for (const tag of t.tags ?? []) {
       const i = tagIndex.get(tag);
       if (i !== undefined) data[row + OFF_TA + i] = taIdf[i];
+    }
+    if (nLa > 0) {
+      const label = labelKey(t.label);
+      const i = label === undefined ? undefined : labelIndex.get(label);
+      if (i !== undefined) {
+        data[row + OFF_LA + i] = laIdf[i];
+        labelRows.push(r);
+      }
     }
     if (nAr > 0) {
       const a = artistKey(t);
@@ -301,6 +358,7 @@ export function buildFeatureMatrix(
   rmsScaleBlock(data, n, d, OFF_PL, OFF_PL + nPl, 1.0 * wSem);
   rmsScaleBlock(data, n, d, OFF_GE, OFF_GE + nGe, 0.5 * wSem);
   rmsScaleBlock(data, n, d, OFF_TA, OFF_TA + nTa, 1.0 * wSem);
+  scaleSparseBlock(data, d, OFF_LA, OFF_LA + nLa, labelRows, labelWeight * wSem);
   rmsScaleBlock(data, n, d, OFF_AR, OFF_AR + nAr, artistWeight * wSem);
   rmsScaleBlock(data, n, d, OFF_NU, OFF_NU + NUMERIC, 1.0 * wNum);
   // Measured sound sits outside the taste/mixability trade-off: it is the one

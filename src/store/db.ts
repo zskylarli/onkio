@@ -9,11 +9,13 @@ import type { MusicFolder } from "../local/folder";
  */
 
 /**
- * v2 invalidates every record written while the Deezer adapter was sending
+ * v3 also invalidates hits made before album labels were collected. Without
+ * this, an explicit label pass would stop at an old BPM/preview cache hit.
+ * v2 invalidated every record written while the Deezer adapter was sending
  * field-syntax queries that always returned zero results: those runs recorded
  * "no BPM exists for this track" when the truth was "we never asked properly".
  */
-export const CACHE_VERSION = 2;
+export const CACHE_VERSION = 3;
 
 /**
  * Hits are permanent — a track's BPM does not change. Misses expire, because
