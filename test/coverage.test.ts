@@ -3,6 +3,7 @@ import {
   collectionCoverage,
   describeLabelInfluence,
   describeOutstanding,
+  describePlaylistInfluence,
   describeSoundInfluence,
   needsLookup,
 } from "../src/collections/coverage";
@@ -209,6 +210,26 @@ describe("describeLabelInfluence", () => {
       enabled: true,
       note: expect.stringContaining("1 of 3 tracks"),
     });
+  });
+});
+
+describe("describePlaylistInfluence", () => {
+  it("disables weighting for a source that carries no playlists", () => {
+    const result = describePlaylistInfluence(0, 0, 12);
+    expect(result.enabled).toBe(false);
+    expect(result.note).toContain("no playlist");
+  });
+
+  it("disables weighting when playlists exist but nothing is filed into them", () => {
+    expect(describePlaylistInfluence(3, 0, 12).enabled).toBe(false);
+  });
+
+  it("reports how many tracks can move, and why it starts weak", () => {
+    const result = describePlaylistInfluence(4, 9, 12);
+    expect(result.enabled).toBe(true);
+    expect(result.note).toContain("9 of 12 tracks");
+    expect(result.note).toContain("4 playlists");
+    expect(result.note).toContain("filing rather than sound");
   });
 });
 

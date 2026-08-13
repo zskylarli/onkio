@@ -6,6 +6,13 @@ import { detectCollectionFormat } from "./parse/format";
 import { decodeRekordboxTxt } from "./parse/rekordboxTxt";
 import type { EmbedRequest, EmbedResponse } from "./embed/embed.worker";
 import { buildFeatureMatrix } from "./features/matrix";
+import { encodeTrack, type FeatureEncoder } from "./features/encoder";
+import {
+  placeVector,
+  projectVector,
+  transferLabels,
+  PROJECTION_NEIGHBORS,
+} from "./embed/project";
 import { Scatter, type ColorMode, type Theme } from "./render/scatter";
 import { EnrichmentQueue } from "./enrich/queue";
 import { DspPool, type AudioSource } from "./dsp/pool";
@@ -77,6 +84,7 @@ import {
   collectionCoverage,
   describeLabelInfluence,
   describeOutstanding,
+  describePlaylistInfluence,
   describeSoundInfluence,
   needsLookup,
   type CollectionCoverage,
@@ -118,6 +126,16 @@ let clusters: Int32Array | null = null;
 /** Playlist-free, pre-UMAP vectors used for similar-track recommendations. */
 let similarityVectors: Float32Array | null = null;
 let similarityD = 0;
+/**
+ * The retained half of the playlist-free fit: the feature encoder and the SVD
+ * basis it feeds. Together with `similarityVectors` and `coords` these are
+ * enough to place a track the library has never seen without re-embedding,
+ * which would move every existing dot. Cleared and rebuilt with the same
+ * `embeddingGeneration` as the vectors, so a stale model is never consulted.
+ */
+let similarityEncoder: FeatureEncoder | null = null;
+let similarityBasis: Float64Array | null = null;
+let similarityInputD = 0;
 let embeddingGeneration = 0;
 let neighborIndex: NeighborIndex | null = null;
 /** Null means all loaded collections; otherwise a literal CollectionMeta.id. */
@@ -1111,6 +1129,7 @@ function runEmbedding(): void {
     semanticWeight: parseInt($<HTMLInputElement>("semantic-slider").value, 10) / 100,
     timbreWeight: parseInt($<HTMLInputElement>("timbre-slider").value, 10) / 100,
     labelWeight: parseInt($<HTMLInputElement>("label-slider").value, 10) / 100,
+    playlistWeight: parseInt($<HTMLInputElement>("playlist-slider").value, 10) / 100,
   };
   const matrix = buildFeatureMatrix(embeddingTracks, embeddingPlaylists, options);
   // Playlist names are personal filing vocabulary. They structure the map, but
@@ -1125,6 +1144,9 @@ function runEmbedding(): void {
   embedWorker?.terminate();
   similarityVectors = null;
   similarityD = 0;
+  similarityEncoder = null;
+  similarityBasis = null;
+  similarityInputD = 0;
   neighborIndex = null;
   const generation = ++embeddingGeneration;
   const worker = new Worker(new URL("./embed/embed.worker.ts", import.meta.url), {
@@ -1143,6 +1165,11 @@ function runEmbedding(): void {
       clusters = msg.clusters;
       similarityVectors = msg.similarity;
       similarityD = msg.similarityD;
+      // The encoder stays on this side: it holds Maps, and the matrix it
+      // describes was built here anyway, so nothing has to be serialized.
+      similarityEncoder = similarityMatrix.encoder;
+      similarityBasis = msg.similarityBasis;
+      similarityInputD = msg.similarityInputD;
       neighborIndex = new NeighborIndex(
         embeddingTracks,
         similarityVectors,
@@ -1162,6 +1189,73 @@ function runEmbedding(): void {
     seed: 42,
   };
   worker.postMessage(req, [matrix.data.buffer, similarityMatrix.data.buffer]);
+}
+
+/** What a caller has to know about a track that is not in the library. All of
+ * it optional: an outside track is described by whatever metadata came with
+ * it, and anything missing simply contributes nothing to its position. */
+export type ExternalTrackInput = Partial<
+  Pick<
+    Track,
+    "name" | "artist" | "genre" | "tags" | "label" | "bpm" | "key" | "year" | "durationMs" | "timbre"
+  >
+>;
+
+export type ProjectedTrack = {
+  x: number;
+  y: number;
+  /** Nearest library tracks in the playlist-free space, nearest first. */
+  neighbors: { pid: string; name: string; distance: number; weight: number }[];
+  /** Cluster carried over from those neighbours by weighted majority. */
+  clusterId: number | null;
+  clusterLabel: string | null;
+  /** Only inferred when the track states no genre of its own. */
+  genre: string | null;
+};
+
+/**
+ * Place a track the library has never seen onto the map that already exists,
+ * without touching any state: encode it through the retained fit, project it
+ * through the retained SVD basis, then take the UMAP-weighted mean of its
+ * nearest neighbours' positions. Returns null until an embedding is ready.
+ */
+function projectExternalTrack(input: ExternalTrackInput): ProjectedTrack | null {
+  if (!library || !similarityEncoder || !similarityVectors || !coords) return null;
+  const track: Track = {
+    pid: "",
+    trackId: 0,
+    name: input.name ?? "",
+    durationMs: input.durationMs ?? 0,
+    playlists: [],
+    ...input,
+  };
+  const row = encodeTrack(similarityEncoder, track);
+  const vector = projectVector(row, similarityBasis, similarityInputD, similarityD);
+  const placement = placeVector(
+    vector,
+    similarityVectors,
+    similarityD,
+    coords,
+    PROJECTION_NEIGHBORS
+  );
+  if (!placement) return null;
+  const transferred = transferLabels(placement.neighbors, clusters, library.tracks);
+  return {
+    x: placement.x,
+    y: placement.y,
+    neighbors: placement.neighbors.map(({ index, distance, weight }) => ({
+      pid: library!.tracks[index].pid,
+      name: library!.tracks[index].name,
+      distance,
+      weight,
+    })),
+    clusterId: transferred.clusterId,
+    clusterLabel:
+      transferred.clusterId === null
+        ? null
+        : clusterLabels.get(transferred.clusterId) ?? null,
+    genre: track.genre ? null : transferred.genre,
+  };
 }
 
 function onEmbeddingReady(): void {
@@ -1527,6 +1621,7 @@ function renderCoverage(): void {
   $("enrich-scope").textContent = describeOutstanding(rows);
   syncSoundInfluence(rows);
   syncLabelInfluence(rows);
+  syncPlaylistInfluence(rows);
 
   const stats = getSourceStats();
   $("source-stats").innerHTML = Object.entries(stats)
@@ -1547,6 +1642,18 @@ function syncLabelInfluence(rows: CollectionCoverage[]): void {
   const { enabled, note } = describeLabelInfluence(rows);
   $<HTMLInputElement>("label-slider").disabled = !enabled;
   $("label-note").textContent = note;
+}
+
+function syncPlaylistInfluence(rows: CollectionCoverage[]): void {
+  const total = rows.reduce((n, r) => n + r.total, 0);
+  const filed = library?.tracks.filter((t) => t.playlists.length > 0).length ?? 0;
+  const { enabled, note } = describePlaylistInfluence(
+    library?.playlists.length ?? 0,
+    filed,
+    total
+  );
+  $<HTMLInputElement>("playlist-slider").disabled = !enabled;
+  $("playlist-note").textContent = note;
 }
 
 $("retry-misses").addEventListener("click", async () => {
@@ -2377,6 +2484,10 @@ $<HTMLInputElement>("label-slider").addEventListener("change", () => {
   runEmbedding();
 });
 
+$<HTMLInputElement>("playlist-slider").addEventListener("change", () => {
+  runEmbedding();
+});
+
 $<HTMLSelectElement>("playlist-filter").addEventListener("change", applyHighlight);
 
 // ---------- highlighting ----------
@@ -2663,6 +2774,7 @@ Object.assign(window, {
     },
     setColorMode,
     focusTrack,
+    projectTrack: projectExternalTrack,
     getNeighbors: (
       pid: string,
       targetCollection: string | null = neighborCollection,
@@ -2680,6 +2792,7 @@ Object.assign(window, {
       playlists: library?.playlists.length ?? 0,
       embedded: coords !== null,
       neighborsReady: neighborIndex !== null,
+      projectionReady: similarityEncoder !== null && similarityVectors !== null,
       neighborCollection,
       clusters: clusters ? new Set(clusters).size : 0,
       gaps: gaps.length,

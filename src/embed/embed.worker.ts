@@ -29,6 +29,14 @@ export type EmbedResponse =
       clusters: Int32Array;
       similarity: Float32Array;
       similarityD: number;
+      /**
+       * The SVD basis of the playlist-free reduction, so the main thread can
+       * project an outside track into this same space. Null when the feature
+       * space was already narrow enough that no reduction happened.
+       */
+      similarityBasis: Float64Array | null;
+      /** Width of a feature row going into that reduction. */
+      similarityInputD: number;
       elapsedMs: number;
     }
   | { type: "error"; message: string };
@@ -83,9 +91,16 @@ self.onmessage = async (e: MessageEvent<EmbedRequest>) => {
         clusters,
         similarity: similarity.data,
         similarityD: similarity.d,
+        similarityBasis: similarity.basis,
+        similarityInputD: similarity.inputD,
         elapsedMs: performance.now() - started,
       },
-      [coords.buffer, clusters.buffer, similarity.data.buffer]
+      [
+        coords.buffer,
+        clusters.buffer,
+        similarity.data.buffer,
+        ...(similarity.basis ? [similarity.basis.buffer] : []),
+      ]
     );
   } catch (err) {
     post({ type: "error", message: err instanceof Error ? err.message : String(err) });

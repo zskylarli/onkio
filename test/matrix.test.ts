@@ -225,6 +225,8 @@ describe("reduceDims", () => {
     }
     const r = reduceDims(data, n, d, 3);
     expect(r.d).toBe(3);
+    expect(r.inputD).toBe(d);
+    expect(r.basis).not.toBeNull();
     // first principal direction should separate the blobs
     const a = r.data[0 * 3];
     const b = r.data[(n - 1) * 3];
@@ -235,6 +237,10 @@ describe("reduceDims", () => {
     const data = new Float32Array(6);
     const r = reduceDims(data, 3, 2, 50);
     expect(r.d).toBe(2);
+    // Null basis means "identity": nothing was projected, so a later
+    // projection of an outside row must pass it through unchanged.
+    expect(r.basis).toBeNull();
+    expect(r.inputD).toBe(2);
   });
 });
 

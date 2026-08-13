@@ -138,6 +138,24 @@ describe("label influence", () => {
   });
 });
 
+describe("playlist influence", () => {
+  const advanced = block('<details id="playlist-advanced">');
+
+  it("ships one collapsed slider at the demoted default", () => {
+    // 25 against genre's 0.5: filing is the weakest signal on the map, and the
+    // control has to open on the weighting the map was actually built with.
+    expect(occurrences('id="playlist-slider"')).toBe(1);
+    expect(advanced).toMatch(/id="playlist-slider"[^>]*value="25"[^>]*disabled/);
+    expect(HTML).not.toContain('<details id="playlist-advanced" open');
+  });
+
+  it("has a coverage note and an explanatory info tip", () => {
+    expect(advanced).toContain('id="playlist-note"');
+    expect(HTML).toContain('aria-label="About playlist influence"');
+    expect(HTML).toContain("not how it sounds");
+  });
+});
+
 describe("demo collection button", () => {
   const importSection = HTML.slice(
     HTML.indexOf('<section id="import-section">'),

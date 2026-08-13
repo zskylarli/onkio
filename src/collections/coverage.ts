@@ -172,6 +172,34 @@ export function describeLabelInfluence(rows: CollectionCoverage[]): {
 }
 
 /**
+ * What the playlist-influence slider can honestly offer. A library imported
+ * from a source that carries no playlists — a rekordbox text export, say — has
+ * nothing for this to weigh, and moving it would rebuild the map to the
+ * identical layout while reporting a time.
+ */
+export function describePlaylistInfluence(
+  playlists: number,
+  filed: number,
+  total: number
+): { enabled: boolean; note: string } {
+  if (playlists === 0 || filed === 0) {
+    return {
+      enabled: false,
+      note:
+        "Nothing here is filed into a playlist, so there is no playlist " +
+        "company to weigh and this can change nothing.",
+    };
+  }
+  return {
+    enabled: true,
+    note:
+      `${filed.toLocaleString()} of ${total.toLocaleString()} tracks sit in one of ` +
+      `${playlists.toLocaleString()} playlists; only those move when this changes. ` +
+      "Playlists start weak because they describe filing rather than sound.",
+  };
+}
+
+/**
  * A short sentence naming which collections still have gaps, for the lookup
  * control. Without it the button reports a count with no indication of which
  * file it belongs to, which is the whole question when two are loaded.

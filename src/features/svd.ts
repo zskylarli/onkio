@@ -5,13 +5,36 @@
  * cyclic Jacobi, then projecting A onto the top-k eigenvectors.
  */
 
+export type Reduction = {
+  data: Float32Array;
+  n: number;
+  /** Output width: k, or the input width when no reduction was needed. */
+  d: number;
+  /**
+   * The `inputD × d` projection the rows were pushed through, row-major, with
+   * columns in output order. Kept so a row that was not in the corpus can be
+   * projected into the same space instead of forcing a re-fit that would move
+   * every existing point. `null` means no reduction was applied and the basis
+   * is the identity.
+   *
+   * The Gram matrix is uncentered, so projecting a new row is a plain dot
+   * product against this basis — there is no mean vector to subtract. Kept at
+   * double precision, the precision the eigensolver worked in, so that
+   * re-projecting an original row reproduces its reduced coordinates exactly
+   * rather than approximately.
+   */
+  basis: Float64Array | null;
+  /** Width of a row going in, i.e. the original `d`. */
+  inputD: number;
+};
+
 export function reduceDims(
   data: Float32Array,
   n: number,
   d: number,
   k: number
-): { data: Float32Array; n: number; d: number } {
-  if (d <= k) return { data, n, d };
+): Reduction {
+  if (d <= k) return { data, n, d, basis: null, inputD: d };
 
   // C = AᵀA (symmetric d×d)
   const c = new Float64Array(d * d);
@@ -35,6 +58,10 @@ export function reduceDims(
     .slice(0, k)
     .map(([, i]) => i);
 
+  const basis = new Float64Array(d * k);
+  for (let i = 0; i < d; i++)
+    for (let kk = 0; kk < k; kk++) basis[i * k + kk] = vectors[i * d + order[kk]];
+
   const out = new Float32Array(n * k);
   for (let r = 0; r < n; r++) {
     const row = r * d;
@@ -45,7 +72,7 @@ export function reduceDims(
       out[r * k + kk] = s;
     }
   }
-  return { data: out, n, d: k };
+  return { data: out, n, d: k, basis, inputD: d };
 }
 
 /** Cyclic Jacobi eigensolver for a symmetric matrix (Float64Array, size d×d).

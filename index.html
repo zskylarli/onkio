@@ -209,6 +209,25 @@
               </span>
             </span>
           </div>
+          <div class="details-head">
+            <details id="playlist-advanced">
+              <summary>Playlist influence</summary>
+              <label>
+                <span>Playlist influence on the map</span>
+                <input type="range" id="playlist-slider" min="0" max="100" value="25" disabled />
+              </label>
+              <div id="playlist-note" class="muted small"></div>
+            </details>
+            <span class="info-tip">
+              <button type="button" class="info-btn" aria-label="About playlist influence" title="About playlist influence">ⓘ</button>
+              <span class="info-popup" role="tooltip">
+                Groups tracks that were filed together. This is the weakest
+                signal on the map by default: a playlist says how you happened
+                to file a track, not how it sounds.
+                <span class="info-popup-block">Playlist names are also private to one crate, so they say nothing about a track imported from someone else's collection and nothing at all about a track from outside your library. Turn it up to lay the map out by your own filing, down to lay it out by the music.</span>
+              </span>
+            </span>
+          </div>
         </section>
       </aside>
 

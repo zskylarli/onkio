@@ -70,33 +70,56 @@ export class NeighborIndex {
     const cached = this.cache.get(key);
     if (cached) return cached;
 
+    const best = this.scan(this.vectors, query * this.d, query, targetCollection, limit);
+    this.cache.set(key, best);
+    return best;
+  }
+
+  /**
+   * Neighbours of a vector that is not in the library — an external track
+   * projected into this same space. Uncached: the query is not identified by a
+   * pid, and an outside track is asked about once.
+   */
+  nearestToVector(
+    vector: Float32Array,
+    targetCollection: string | null = null,
+    limit = 5
+  ): Neighbor[] {
+    if (limit <= 0 || vector.length !== this.d) return [];
+    return this.scan(vector, 0, -1, targetCollection, limit);
+  }
+
+  private scan(
+    source: Float32Array,
+    at: number,
+    skip: number,
+    targetCollection: string | null,
+    limit: number
+  ): Neighbor[] {
     const best: Neighbor[] = [];
     for (let index = 0; index < this.tracks.length; index++) {
-      if (index === query) continue;
+      if (index === skip) continue;
       const track = this.tracks[index];
       if (targetCollection !== null && track.collection !== targetCollection) continue;
 
       let distanceSq = 0;
-      const a = query * this.d;
       const b = index * this.d;
       for (let c = 0; c < this.d; c++) {
-        const delta = this.vectors[a + c] - this.vectors[b + c];
+        const delta = source[at + c] - this.vectors[b + c];
         distanceSq += delta * delta;
       }
       if (!Number.isFinite(distanceSq)) continue;
 
       const neighbor = { track, index, distanceSq };
-      const at = best.findIndex(
+      const insertAt = best.findIndex(
         (other) =>
           distanceSq < other.distanceSq ||
           (distanceSq === other.distanceSq && index < other.index)
       );
-      if (at >= 0) best.splice(at, 0, neighbor);
+      if (insertAt >= 0) best.splice(insertAt, 0, neighbor);
       else best.push(neighbor);
       if (best.length > limit) best.pop();
     }
-
-    this.cache.set(key, best);
     return best;
   }
 }

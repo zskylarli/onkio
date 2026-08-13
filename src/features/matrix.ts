@@ -1,6 +1,7 @@
 import type { Playlist, Track } from "../types";
 import { keyVector } from "../music/camelot";
 import { labelKey } from "../enrich/label";
+import type { FeatureEncoder } from "./encoder";
 
 /**
  * Feature matrix (§5). Blocks: playlist incidence (TF-IDF), genre one-hot
@@ -38,6 +39,11 @@ export type MatrixOptions = {
   /** 0–1 influence of record-label roster signal on the semantic side. */
   labelWeight?: number;
   maxLabelVocab?: number;
+  /**
+   * 0–1 influence of playlist company, the weakest relational block by
+   * default. See the block-weighting comment at the end of the fit.
+   */
+  playlistWeight?: number;
   /** Blocks left out entirely. Excluded vocabularies cost no dimensions. */
   exclude?: readonly FeatureBlock[];
   /**
@@ -53,8 +59,12 @@ export type FeatureMatrix = {
   data: Float32Array; // row-major n × d
   n: number;
   d: number;
+  /** The fit itself, so an outside track can be encoded into this same space. */
+  encoder: FeatureEncoder;
 };
 
+/** Scales the block in place and reports the factor applied, so the encoder can
+ * replay it on a row that was not part of the corpus. 1 means "left alone". */
 function rmsScaleBlock(
   data: Float32Array,
   n: number,
@@ -62,15 +72,17 @@ function rmsScaleBlock(
   from: number,
   to: number,
   weight: number
-): void {
+): number {
+  if (n === 0 || to <= from) return 1;
   let ss = 0;
   for (let r = 0; r < n; r++)
     for (let c = from; c < to; c++) ss += data[r * d + c] ** 2;
   const rms = Math.sqrt(ss / n);
-  if (rms === 0) return;
+  if (rms === 0) return 1;
   const f = weight / rms;
   for (let r = 0; r < n; r++)
     for (let c = from; c < to; c++) data[r * d + c] *= f;
+  return f;
 }
 
 /**
@@ -95,9 +107,11 @@ function scaleTimbreBlock(
   to: number,
   rows: number[],
   weight: number
-): void {
-  if (rows.length === 0 || weight === 0) return;
+): { mean: Float64Array; std: Float64Array; factor: number } | null {
+  if (rows.length === 0 || weight === 0) return null;
 
+  const means = new Float64Array(to - from);
+  const stds = new Float64Array(to - from);
   for (let c = from; c < to; c++) {
     let sum = 0;
     for (const r of rows) sum += data[r * d + c];
@@ -106,14 +120,17 @@ function scaleTimbreBlock(
     for (const r of rows) ss += (data[r * d + c] - mean) ** 2;
     const std = Math.sqrt(ss / rows.length) || 1;
     for (const r of rows) data[r * d + c] = (data[r * d + c] - mean) / std;
+    means[c - from] = mean;
+    stds[c - from] = std;
   }
 
   let ss = 0;
   for (const r of rows) for (let c = from; c < to; c++) ss += data[r * d + c] ** 2;
   const rms = Math.sqrt(ss / rows.length);
-  if (rms === 0) return;
+  if (rms === 0) return { mean: means, std: stds, factor: 1 };
   const f = weight / rms;
   for (const r of rows) for (let c = from; c < to; c++) data[r * d + c] *= f;
+  return { mean: means, std: stds, factor: f };
 }
 
 /**
@@ -128,14 +145,15 @@ function scaleSparseBlock(
   to: number,
   rows: number[],
   weight: number
-): void {
-  if (rows.length === 0 || weight === 0) return;
+): number {
+  if (rows.length === 0 || weight === 0) return 1;
   let ss = 0;
   for (const r of rows) for (let c = from; c < to; c++) ss += data[r * d + c] ** 2;
   const rms = Math.sqrt(ss / rows.length);
-  if (rms === 0) return;
+  if (rms === 0) return 1;
   const f = weight / rms;
   for (const r of rows) for (let c = from; c < to; c++) data[r * d + c] *= f;
+  return f;
 }
 
 /** Case- and whitespace-insensitive artist identity, shared by the artist
@@ -156,6 +174,7 @@ export function buildFeatureMatrix(
   const maxTagVocab = opts.maxTagVocab ?? 200;
   const labelWeight = opts.labelWeight ?? 0.75;
   const maxLabelVocab = opts.maxLabelVocab ?? 200;
+  const playlistWeight = opts.playlistWeight ?? 0.25;
   const artistWeight = opts.artistWeight ?? 0;
   const maxArtistVocab = opts.maxArtistVocab ?? 200;
   const n = tracks.length;
@@ -350,23 +369,93 @@ export function buildFeatureMatrix(
   }
 
   // --- per-block scaling + slider (§5.2.2, §5.3) ---
-  // Semantic side: playlists carry the structure; genre is low-information
-  // (§0) and gets half weight; tags are the only block with outside knowledge
-  // (§5.2.4) and get full weight when present.
+  // Semantic side: tags are the only block carrying outside knowledge (§5.2.4)
+  // and get full weight when present; genre is low-information (§0) and gets
+  // half. Playlists are deliberately the weakest relational block: a playlist
+  // records how the user happened to file a track rather than anything about
+  // how it sounds, and the vocabulary is private — two people's crates share
+  // no playlist names, so the block carries literally no information across
+  // collections and cannot place an imported or outside track at all.
   const wSem = 2 * semantic;
   const wNum = 2 * (1 - semantic);
-  rmsScaleBlock(data, n, d, OFF_PL, OFF_PL + nPl, 1.0 * wSem);
-  rmsScaleBlock(data, n, d, OFF_GE, OFF_GE + nGe, 0.5 * wSem);
-  rmsScaleBlock(data, n, d, OFF_TA, OFF_TA + nTa, 1.0 * wSem);
-  scaleSparseBlock(data, d, OFF_LA, OFF_LA + nLa, labelRows, labelWeight * wSem);
-  rmsScaleBlock(data, n, d, OFF_AR, OFF_AR + nAr, artistWeight * wSem);
-  rmsScaleBlock(data, n, d, OFF_NU, OFF_NU + NUMERIC, 1.0 * wNum);
+  const plScale = rmsScaleBlock(data, n, d, OFF_PL, OFF_PL + nPl, playlistWeight * wSem);
+  const geScale = rmsScaleBlock(data, n, d, OFF_GE, OFF_GE + nGe, 0.5 * wSem);
+  const taScale = rmsScaleBlock(data, n, d, OFF_TA, OFF_TA + nTa, 1.0 * wSem);
+  const laScale = scaleSparseBlock(
+    data,
+    d,
+    OFF_LA,
+    OFF_LA + nLa,
+    labelRows,
+    labelWeight * wSem
+  );
+  const arScale = rmsScaleBlock(data, n, d, OFF_AR, OFF_AR + nAr, artistWeight * wSem);
+  const nuScale = rmsScaleBlock(data, n, d, OFF_NU, OFF_NU + NUMERIC, 1.0 * wNum);
   // Measured sound sits outside the taste/mixability trade-off: it is the one
   // block that isn't derived from how the user filed the track, so it gets its
   // own weight rather than competing for the slider's budget.
-  if (nTi > 0) {
-    scaleTimbreBlock(data, d, OFF_TI, OFF_TI + nTi, timbreRows, 2 * timbreWeight);
-  }
+  const timbreStats =
+    nTi > 0
+      ? scaleTimbreBlock(data, d, OFF_TI, OFF_TI + nTi, timbreRows, 2 * timbreWeight)
+      : null;
 
-  return { data, n, d };
+  const encoder: FeatureEncoder = {
+    d,
+    offsets: {
+      playlist: OFF_PL,
+      genre: OFF_GE,
+      tag: OFF_TA,
+      label: OFF_LA,
+      artist: OFF_AR,
+      numeric: OFF_NU,
+      timbre: OFF_TI,
+    },
+    widths: {
+      playlist: nPl,
+      genre: nGe,
+      tag: nTa,
+      label: nLa,
+      artist: nAr,
+      numeric: NUMERIC,
+      timbre: nTi,
+    },
+    vocab: {
+      playlist: playlistIndex,
+      genre: genreIndex,
+      tag: tagIndex,
+      label: labelIndex,
+      artist: artistIndex,
+    },
+    idf: {
+      playlist: Float64Array.from(plIdf),
+      genre: Float64Array.from(geIdf),
+      tag: Float64Array.from(taIdf),
+      label: Float64Array.from(laIdf),
+      artist: Float64Array.from(arIdf),
+    },
+    numeric: {
+      bpmMean: bM,
+      bpmStd: bS,
+      yearMean: yM,
+      yearStd: yS,
+      durationMean: dM,
+      durationStd: dS,
+      useBpm: use("bpm"),
+      useKey: use("key"),
+      useYear: use("year"),
+      useDuration: use("duration"),
+    },
+    timbre: timbreStats && { mean: timbreStats.mean, std: timbreStats.std },
+    scale: {
+      playlist: plScale,
+      genre: geScale,
+      tag: taScale,
+      label: laScale,
+      artist: arScale,
+      numeric: nuScale,
+      timbre: timbreStats?.factor ?? 1,
+    },
+  };
+
+  return { data, n, d, encoder };
 }

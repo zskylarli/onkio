@@ -247,9 +247,11 @@ header h1 {
 #sidebar input[type="range"] { accent-color: var(--accent); }
 #sidebar input[type="range"]:disabled { accent-color: var(--muted); cursor: not-allowed; }
 #timbre-note,
-#label-note { margin-top: 4px; }
+#label-note,
+#playlist-note { margin-top: 4px; }
 #timbre-note:empty,
-#label-note:empty { display: none; }
+#label-note:empty,
+#playlist-note:empty { display: none; }
 #sidebar button {
   width: 100%;
   margin: 6px 0 0;
