@@ -13,6 +13,9 @@ export type EmbedRequest = {
   data: Float32Array;
   n: number;
   d: number;
+  /** Playlist-free matrix used only for similar-track recommendations. */
+  similarityData: Float32Array;
+  similarityD: number;
   seed?: number;
   nNeighbors?: number;
   minDist?: number;
@@ -20,7 +23,14 @@ export type EmbedRequest = {
 
 export type EmbedResponse =
   | { type: "progress"; epoch: number; totalEpochs: number }
-  | { type: "done"; coords: Float32Array; clusters: Int32Array; elapsedMs: number }
+  | {
+      type: "done";
+      coords: Float32Array;
+      clusters: Int32Array;
+      similarity: Float32Array;
+      similarityD: number;
+      elapsedMs: number;
+    }
   | { type: "error"; message: string };
 
 self.onmessage = async (e: MessageEvent<EmbedRequest>) => {
@@ -28,6 +38,12 @@ self.onmessage = async (e: MessageEvent<EmbedRequest>) => {
   try {
     const { n, seed = 42, nNeighbors = 15, minDist = 0.1 } = e.data;
     const reduced = reduceDims(e.data.data, n, e.data.d, 50);
+    const similarity = reduceDims(
+      e.data.similarityData,
+      n,
+      e.data.similarityD,
+      50
+    );
 
     const rows: number[][] = new Array(n);
     for (let i = 0; i < n; i++) {
@@ -61,8 +77,15 @@ self.onmessage = async (e: MessageEvent<EmbedRequest>) => {
     const clusters = kmeans(coords, n, k, seed);
 
     post(
-      { type: "done", coords, clusters, elapsedMs: performance.now() - started },
-      [coords.buffer, clusters.buffer]
+      {
+        type: "done",
+        coords,
+        clusters,
+        similarity: similarity.data,
+        similarityD: similarity.d,
+        elapsedMs: performance.now() - started,
+      },
+      [coords.buffer, clusters.buffer, similarity.data.buffer]
     );
   } catch (err) {
     post({ type: "error", message: err instanceof Error ? err.message : String(err) });

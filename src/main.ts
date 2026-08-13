@@ -97,12 +97,24 @@ import {
 import { camelotDisplay, toCamelot } from "./music/camelot";
 import { dismissInfoPopups, initInfoTips, repositionInfoPopups } from "./views/infoTip";
 import { resolvePreviewUrl } from "./enrich/preview";
+import {
+  buildSimilarityMatrix,
+  NeighborIndex,
+  type Neighbor,
+} from "./views/neighbors";
 
 // ---------- state ----------
 
 let library: Library | null = null;
 let coords: Float32Array | null = null;
 let clusters: Int32Array | null = null;
+/** Playlist-free, pre-UMAP vectors used for similar-track recommendations. */
+let similarityVectors: Float32Array | null = null;
+let similarityD = 0;
+let embeddingGeneration = 0;
+let neighborIndex: NeighborIndex | null = null;
+/** Null means all loaded collections; otherwise a literal CollectionMeta.id. */
+let neighborCollection: string | null = null;
 let clusterLabels = new Map<number, string>();
 let pidToIndex = new Map<string, number>();
 let scatter: Scatter | null = null;
@@ -528,6 +540,12 @@ $("undo-import").addEventListener("click", async () => {
 
 async function onLibraryLoaded(input: Library): Promise<void> {
   const lib = ensureCollections(input);
+  if (
+    neighborCollection !== null &&
+    !lib.collections?.some((collection) => collection.id === neighborCollection)
+  ) {
+    neighborCollection = null;
+  }
   // Manual overrides survive re-import (§4 stage 3) — keyed on Persistent ID.
   const overrides = await getAllOverrides();
   for (const t of lib.tracks) {
@@ -1042,21 +1060,37 @@ let embedWorker: Worker | null = null;
  */
 function runEmbedding(): void {
   if (!library) return;
+  const embeddingTracks = library.tracks;
+  const embeddingPlaylists = library.playlists;
   const status = $("embed-status");
   status.textContent = "Building features…";
 
-  const matrix = buildFeatureMatrix(library.tracks, library.playlists, {
+  const options = {
     semanticWeight: parseInt($<HTMLInputElement>("semantic-slider").value, 10) / 100,
     timbreWeight: parseInt($<HTMLInputElement>("timbre-slider").value, 10) / 100,
     labelWeight: parseInt($<HTMLInputElement>("label-slider").value, 10) / 100,
-  });
+  };
+  const matrix = buildFeatureMatrix(embeddingTracks, embeddingPlaylists, options);
+  // Playlist names are personal filing vocabulary. They structure the map, but
+  // comparing them across two people's crates makes "unknown playlist" look
+  // like musical dissimilarity, so recommendations get their own matrix.
+  const similarityMatrix = buildSimilarityMatrix(
+    embeddingTracks,
+    embeddingPlaylists,
+    options
+  );
 
   embedWorker?.terminate();
+  similarityVectors = null;
+  similarityD = 0;
+  neighborIndex = null;
+  const generation = ++embeddingGeneration;
   const worker = new Worker(new URL("./embed/embed.worker.ts", import.meta.url), {
     type: "module",
   });
   embedWorker = worker;
   worker.onmessage = (e: MessageEvent<EmbedResponse>) => {
+    if (worker !== embedWorker || generation !== embeddingGeneration) return;
     const msg = e.data;
     if (msg.type === "progress") {
       status.textContent = `Embedding… ${Math.round((msg.epoch / msg.totalEpochs) * 100)}%`;
@@ -1065,12 +1099,27 @@ function runEmbedding(): void {
     } else {
       coords = msg.coords;
       clusters = msg.clusters;
+      similarityVectors = msg.similarity;
+      similarityD = msg.similarityD;
+      neighborIndex = new NeighborIndex(
+        embeddingTracks,
+        similarityVectors,
+        similarityD,
+        generation
+      );
       status.textContent = `Embedded in ${(msg.elapsedMs / 1000).toFixed(1)}s`;
       onEmbeddingReady();
     }
   };
-  const req: EmbedRequest = { data: matrix.data, n: matrix.n, d: matrix.d, seed: 42 };
-  worker.postMessage(req, [matrix.data.buffer]);
+  const req: EmbedRequest = {
+    data: matrix.data,
+    n: matrix.n,
+    d: matrix.d,
+    similarityData: similarityMatrix.data,
+    similarityD: similarityMatrix.d,
+    seed: 42,
+  };
+  worker.postMessage(req, [matrix.data.buffer, similarityMatrix.data.buffer]);
 }
 
 function onEmbeddingReady(): void {
@@ -1467,6 +1516,39 @@ $("retry-misses").addEventListener("click", async () => {
 
 const tooltip = $("tooltip");
 
+function currentNeighbors(track: Track): Neighbor[] {
+  return neighborIndex?.nearest(track.pid, neighborCollection, 5) ?? [];
+}
+
+function neighborCollectionLabel(): string {
+  if (!neighborCollection || !library) return "all collections";
+  return (
+    library.collections?.find((collection) => collection.id === neighborCollection)
+      ?.label ?? "all collections"
+  );
+}
+
+function hoverNeighborPreview(track: Track): string {
+  if (!neighborIndex) return "";
+  const neighbors = currentNeighbors(track);
+  if (neighbors.length === 0) {
+    return `<div class="neighbor-preview muted">No similar tracks in ${esc(neighborCollectionLabel())}.</div>`;
+  }
+  const shown = neighbors.slice(0, 2);
+  const more = neighbors.length - shown.length;
+  return `
+    <div class="neighbor-preview">
+      <div class="neighbor-preview-title">Similar in ${esc(neighborCollectionLabel())}</div>
+      ${shown
+        .map(
+          ({ track: neighbor }) =>
+            `<div><span>${esc(neighbor.name)}</span><span class="muted"> — ${esc(neighbor.artist ?? "Unknown artist")}</span></div>`
+        )
+        .join("")}
+      ${more > 0 ? `<div class="muted">+${more} more — click to view</div>` : ""}
+    </div>`;
+}
+
 function handleHover(track: Track | null, x: number, y: number): void {
   // Fires on every pointer move over the canvas, not only on entering a dot, so
   // any dwell that has not fired yet belongs to a position already left behind.
@@ -1494,6 +1576,7 @@ function handleHover(track: Track | null, x: number, y: number): void {
       ${track.year ? `<span class="badge">${track.year}</span>` : ""}
       ${browsing ? `<span class="badge audio-badge">${isPlayable(track) ? (localByPid.has(track.pid) ? "file" : "preview") : "no audio"}</span>` : ""}
     </div>
+    ${hoverNeighborPreview(track)}
   `;
 }
 
@@ -1517,6 +1600,9 @@ function anchorPopover(el: HTMLElement, worldX: number, worldY: number): void {
   const view = $("view-map");
   const vw = view.clientWidth;
   const vh = view.clientHeight;
+  // The search and toolbar occupy the map's top row. A tall similar-track list
+  // otherwise clamps to y=8 and sits underneath them even though it scrolls.
+  const topClearance = 54;
   if (p[0] < -300 || p[1] < -300 || p[0] > vw + 300 || p[1] > vh + 300) {
     el.style.visibility = "hidden";
     return;
@@ -1529,7 +1615,7 @@ function anchorPopover(el: HTMLElement, worldX: number, worldY: number): void {
   if (left + pw > vw - 8) left = p[0] - pw - 16;
   if (top + ph > vh - 8) top = p[1] - ph - 16;
   el.style.left = `${Math.max(8, Math.min(left, vw - pw - 8))}px`;
-  el.style.top = `${Math.max(8, Math.min(top, vh - ph - 8))}px`;
+  el.style.top = `${Math.max(topClearance, Math.min(top, vh - ph - 8))}px`;
 }
 
 function repositionPopovers(): void {
@@ -1564,11 +1650,64 @@ function fmtDuration(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+function renderNeighborSection(track: Track): string {
+  const collections = library?.collections ?? [];
+  const selector =
+    collections.length > 1
+      ? `<select id="neighbor-collection" aria-label="Recommend from collection">
+          <option value=""${neighborCollection === null ? " selected" : ""}>All collections</option>
+          ${collections
+            .map(
+              (collection) =>
+                `<option value="${esc(collection.id)}"${neighborCollection === collection.id ? " selected" : ""}>${esc(collection.label)}</option>`
+            )
+            .join("")}
+        </select>`
+      : "";
+
+  if (!neighborIndex) {
+    return `<hr />
+      <section class="similar-tracks">
+        <div class="similar-head"><strong>Similar tracks</strong>${selector}</div>
+        <div class="small muted">Available when the map finishes embedding.</div>
+      </section>`;
+  }
+
+  const neighbors = currentNeighbors(track);
+  const showCollection = neighborCollection === null && collections.length > 1;
+  return `<hr />
+    <section class="similar-tracks">
+      <div class="similar-head"><strong>Similar tracks</strong>${selector}</div>
+      ${
+        neighbors.length > 0
+          ? `<div class="neighbor-list">${neighbors
+              .map(
+                ({ track: neighbor }) =>
+                  `<button type="button" class="neighbor-hit" data-neighbor-pid="${esc(neighbor.pid)}">
+                    <span class="neighbor-name">${esc(neighbor.name)}</span>
+                    <span class="neighbor-meta">${esc(neighbor.artist ?? "Unknown artist")}${
+                      showCollection
+                        ? ` · ${esc(
+                            collections.find(
+                              (collection) => collection.id === neighbor.collection
+                            )?.label ?? "Imported library"
+                          )}`
+                        : ""
+                    }</span>
+                  </button>`
+              )
+              .join("")}</div>`
+          : `<div class="small muted">No other tracks are available in ${esc(neighborCollectionLabel())}.</div>`
+      }
+    </section>`;
+}
+
 function renderTrackPopover(): void {
   const t = popoverTrack;
   if (!t) return;
   const el = $("track-popover");
   el.hidden = false;
+  el.dataset.trackPid = t.pid;
 
   const hasFile = localByPid.has(t.pid);
   const sharedName = localResolution?.ambiguous.get(t.pid)?.length ?? 0;
@@ -1620,9 +1759,19 @@ function renderTrackPopover(): void {
       <button id="play-audio" title="${esc(audio.hint)}">${audio.label}</button>
     </div>
     <div id="playback-note" class="small muted"></div>
+    ${renderNeighborSection(t)}
   `;
 
   el.querySelector<HTMLButtonElement>(".close")!.addEventListener("click", closeTrackPopover);
+  el
+    .querySelector<HTMLSelectElement>("#neighbor-collection")
+    ?.addEventListener("change", (event) => {
+      neighborCollection = (event.currentTarget as HTMLSelectElement).value || null;
+      renderTrackPopover();
+    });
+  el.querySelectorAll<HTMLButtonElement>(".neighbor-hit").forEach((button) => {
+    button.addEventListener("click", () => focusTrack(button.dataset.neighborPid!));
+  });
 
   $("ov-save").addEventListener("click", async () => {
     const bpmVal = parseFloat($<HTMLInputElement>("ov-bpm").value);
@@ -2403,10 +2552,25 @@ Object.assign(window, {
       if (el) el.checked = true;
     },
     setColorMode,
+    focusTrack,
+    getNeighbors: (
+      pid: string,
+      targetCollection: string | null = neighborCollection,
+      limit = 5
+    ) =>
+      (neighborIndex?.nearest(pid, targetCollection, limit) ?? []).map(
+        ({ track, distanceSq }) => ({
+          pid: track.pid,
+          collection: track.collection ?? null,
+          distanceSq,
+        })
+      ),
     getState: () => ({
       tracks: library?.tracks.length ?? 0,
       playlists: library?.playlists.length ?? 0,
       embedded: coords !== null,
+      neighborsReady: neighborIndex !== null,
+      neighborCollection,
       clusters: clusters ? new Set(clusters).size : 0,
       gaps: gaps.length,
       // Detail as well as count: the thresholds in views/gaps.ts are ratios,
@@ -2419,6 +2583,7 @@ Object.assign(window, {
       })),
       theme: currentTheme(),
       browsing,
+      hoveredPid,
       lasso: lassoMode,
       setPanel: setPanelIsOpen(),
       set: setList.map((t) => t.pid),
