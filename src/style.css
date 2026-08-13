@@ -617,10 +617,12 @@ main { grid-area: main; position: relative; overflow: hidden; }
 .popover {
   position: absolute;
   z-index: 20;
-  width: 290px;
+  width: min(360px, calc(100% - 16px));
+  box-sizing: border-box;
   /* Leave the map's search row clear when a five-track list makes this tall. */
   max-height: calc(100% - 68px);
   overflow-y: auto;
+  overflow-x: hidden;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -628,7 +630,12 @@ main { grid-area: main; position: relative; overflow: hidden; }
   padding: 12px 14px;
   font-size: 13px;
 }
-.popover h3 { margin: 0 6px 2px 0; font-size: 14px; line-height: 1.3; }
+.popover h3 {
+  margin: 0 6px 2px 0;
+  font-size: 14px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
 .popover .close {
   position: absolute;
   top: 6px;
@@ -641,7 +648,11 @@ main { grid-area: main; position: relative; overflow: hidden; }
   line-height: 1;
 }
 .popover .close:hover { color: var(--text); }
-.popover .sub { color: var(--muted); margin-bottom: 6px; }
+.popover .sub {
+  color: var(--muted);
+  margin-bottom: 6px;
+  overflow-wrap: anywhere;
+}
 .popover .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 6px 0; }
 .popover input {
   width: 92px;
@@ -694,6 +705,8 @@ main { grid-area: main; position: relative; overflow: hidden; }
 .neighbor-hit {
   display: block;
   width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
   padding: 5px 7px;
   text-align: left;
   background: var(--panel-2);
@@ -710,9 +723,8 @@ main { grid-area: main; position: relative; overflow: hidden; }
 .neighbor-name,
 .neighbor-meta {
   display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .neighbor-name { font-size: 12px; }
 .neighbor-meta { color: var(--muted); font-size: 10px; }

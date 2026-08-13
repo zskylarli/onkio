@@ -15,6 +15,23 @@ export type SearchResults = {
   shown: number[];
 };
 
+export type SearchMenuAction = "query-changed" | "search-focused" | "result-selected" | "cleared";
+
+/**
+ * Dropdown dismissal is deliberately independent of the query and its map
+ * highlight. Choosing a result closes only the menu; typing, clearing, or
+ * intentionally returning to the field makes candidates available again.
+ */
+export function nextSearchMenuDismissed(
+  dismissed: boolean,
+  action: SearchMenuAction
+): boolean {
+  if (action === "result-selected") return true;
+  if (action === "query-changed" || action === "search-focused" || action === "cleared")
+    return false;
+  return dismissed;
+}
+
 const EMPTY: SearchResults = { matches: [], shown: [] };
 
 /**

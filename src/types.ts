@@ -35,13 +35,15 @@ export type Track = {
   collection?: string;
 };
 
+export type CollectionFormat = "rekordbox" | "rekordbox-txt" | "apple";
+
 /** One imported file, kept as provenance after a union (src/collections). */
 export type CollectionMeta = {
   /** stable key stored on every track of this collection */
   id: string;
   /** user-visible name, normally the file name */
   label: string;
-  format: "rekordbox" | "apple";
+  format: CollectionFormat;
   trackCount: number;
   /** ISO timestamp of the import */
   addedAt: string;

@@ -8,8 +8,11 @@ import {
   bpmColor,
   decadeColor,
   decadeOf,
+  genreColor,
+  genreDisplayLabel,
   keyColor,
   makeBpmScale,
+  normalizeGenre,
   type RGB,
 } from "../src/render/palette";
 
@@ -144,6 +147,27 @@ describe("decade bins", () => {
       expect(distance(decadeColor(i - 1, 8), decadeColor(i, 8))).toBeGreaterThan(30);
     }
     expect(decadeColor(0, 1)).toHaveLength(3);
+  });
+});
+
+describe("genre palette", () => {
+  it("merges cosmetic whitespace and casing", () => {
+    expect(normalizeGenre("  Indie   Pop ")).toEqual({ key: "indie pop", label: "Indie Pop" });
+    expect(normalizeGenre("INDIE POP")?.key).toBe("indie pop");
+    expect(normalizeGenre(" \t ")).toBeNull();
+  });
+
+  it("assigns colors from the normalized value, independent of encounter order", () => {
+    expect(genreColor(" Pop ")).toEqual(genreColor("pop"));
+    expect(genreColor("House")).not.toEqual(genreColor("Pop"));
+  });
+
+  it("chooses a stable sensible display spelling", () => {
+    const a = genreDisplayLabel(["indie pop", "INDIE POP", "Indie Pop"]);
+    const b = genreDisplayLabel(["Indie Pop", "indie pop", "INDIE POP"]);
+    expect(a).toBe("Indie Pop");
+    expect(b).toBe(a);
+    expect(genreDisplayLabel(["R&B/Soul", "r&b/soul"])).toBe("R&B/Soul");
   });
 });
 

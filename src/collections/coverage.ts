@@ -1,4 +1,4 @@
-import type { CollectionMeta, Library, Track } from "../types";
+import type { CollectionFormat, CollectionMeta, Library, Track } from "../types";
 
 /**
  * Coverage, measured per imported file rather than over the whole library.
@@ -19,7 +19,7 @@ import type { CollectionMeta, Library, Track } from "../types";
 export type CollectionCoverage = {
   id: string;
   label: string;
-  format: "rekordbox" | "apple";
+  format: CollectionFormat;
   /** tracks belonging to this collection */
   total: number;
   bpm: number;
@@ -91,7 +91,11 @@ export function collectionCoverage(
         id,
         label: id === UNFILED ? "Unfiled" : id,
         // A pid prefix is the only evidence of format left once metadata is gone.
-        format: t.pid.startsWith("rb:") ? "rekordbox" : "apple",
+        format: t.pid.startsWith("rbtxt:")
+          ? "rekordbox-txt"
+          : t.pid.startsWith("rb:")
+            ? "rekordbox"
+            : "apple",
         trackCount: 0,
         addedAt: "",
       });

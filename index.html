@@ -32,15 +32,16 @@
               <span class="info-popup" role="tooltip">
                 A <strong>rekordbox</strong> collection export is the best input.
                 It already carries BPM and key analysis. In rekordbox:
-                <em>File → Export Collection in xml format</em>. An Apple Music
-                <code>Library.xml</code> also works, but carries no BPM or key.
+                <em>File → Export Collection in xml format</em>. Fixed-format
+                rekordbox TXT exports and Apple Music <code>Library.xml</code>
+                also work; TXT has no file locations, while Apple carries no BPM or key.
                 <span class="info-popup-block">Several files can be loaded at once. They are laid out in one shared space, and each keeps its own colour and its own coverage, so a crate that already has BPM and key is never confused with one that needs looking up.</span>
               </span>
             </span>
           </div>
           <label class="file-drop" id="file-drop">
-            <input type="file" id="file-input" accept=".xml" multiple />
-            <span>Drop collection XML files here or click to choose</span>
+            <input type="file" id="file-input" accept=".xml,.txt,text/xml,text/plain" multiple />
+            <span>Drop collection XML or TXT files here or click to choose</span>
           </label>
           <!-- Outside the label on purpose: a click anywhere inside it is
                forwarded to the file input, so a demo button in there would open
@@ -238,8 +239,8 @@
             <span class="search-icon" aria-hidden="true">
               <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="7" cy="7" r="4.2" /><path d="M10.2 10.2 14 14" /></svg>
             </span>
-            <input type="search" id="track-search" placeholder="Find a track" aria-label="Find a track" autocomplete="off" spellcheck="false" />
-            <div id="search-results" hidden></div>
+            <input type="search" id="track-search" placeholder="Find a track" aria-label="Find a track" aria-controls="search-results" aria-expanded="false" aria-autocomplete="list" autocomplete="off" spellcheck="false" />
+            <div id="search-results" aria-label="Search candidates" hidden></div>
           </div>
 
           <div id="legend" hidden>
@@ -254,6 +255,7 @@
                   <select id="color-mode">
                     <option value="cluster">Cluster</option>
                     <option value="collection">Collection</option>
+                    <option value="genre">Genre</option>
                     <option value="bpm">BPM</option>
                     <option value="key">Key</option>
                     <option value="year">Year</option>

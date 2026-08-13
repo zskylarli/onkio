@@ -43,6 +43,50 @@ export function collectionColor(i: number): RGB {
   return COLLECTION_COLORS[i % COLLECTION_COLORS.length];
 }
 
+// ---- Genre: deterministic categories ----
+
+export type NormalizedGenre = { key: string; label: string };
+
+/** Collapse cosmetic whitespace and casing while keeping human-readable text. */
+export function normalizeGenre(raw: string | undefined): NormalizedGenre | null {
+  const label = raw?.trim().replace(/\s+/g, " ");
+  if (!label) return null;
+  return { key: label.toLocaleLowerCase("en-US"), label };
+}
+
+function genreHash(key: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < key.length; i++) {
+    hash = Math.imul(hash ^ key.charCodeAt(i), 16777619);
+  }
+  return hash >>> 0;
+}
+
+/** The normalized name, not encounter order, decides a genre's color. */
+export function genreColor(raw: string): RGB {
+  const key = normalizeGenre(raw)?.key ?? "";
+  const hash = genreHash(key);
+  const hue = ((hash * 0.61803398875) % 1 + 1) % 1;
+  const saturation = 0.58 + ((hash >>> 8) % 16) / 100;
+  const lightness = 0.5 + ((hash >>> 16) % 13) / 100;
+  return hslToRgb(hue, saturation, lightness);
+}
+
+/**
+ * Pick a stable display spelling among equivalent values. Prefer ordinary
+ * title-like casing, while retaining punctuation and acronyms such as R&B.
+ */
+export function genreDisplayLabel(labels: Iterable<string>): string {
+  const candidates = [...new Set(labels)].sort((a, b) => a.localeCompare(b, "en-US"));
+  const score = (label: string): number => {
+    const cased = [...label].filter((c) => c.toLocaleLowerCase() !== c.toLocaleUpperCase());
+    const first = cased[0];
+    const allUpper = cased.length > 2 && cased.every((c) => c === c.toLocaleUpperCase());
+    return (first && first === first.toLocaleUpperCase() ? 2 : 0) + (allUpper ? 0 : 1);
+  };
+  return candidates.sort((a, b) => score(b) - score(a) || a.localeCompare(b, "en-US"))[0] ?? "";
+}
+
 // ---- BPM: adaptive bins, slow (blue) → fast (red) ----
 
 /**

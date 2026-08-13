@@ -178,6 +178,14 @@ describe("demo collection button", () => {
   });
 });
 
+describe("library file picker", () => {
+  it("accepts both XML and fixed-format rekordbox TXT exports", () => {
+    expect(HTML).toMatch(/id="file-input"[^>]*accept="[^"]*\.xml[^"]*\.txt[^"]*"/);
+    expect(HTML).toContain("Drop collection XML or TXT files");
+    expect(HTML).toContain("rekordbox TXT exports");
+  });
+});
+
 describe("music folder section", () => {
   it("carries the controls main.ts reaches for by id", () => {
     expect(occurrences('id="local-section"')).toBe(1);
@@ -260,7 +268,7 @@ describe("map search", () => {
   it("puts the field and its results together above the canvas", () => {
     expect(search).toContain('id="track-search"');
     // A dropdown under the field, so it starts closed rather than empty.
-    expect(search).toMatch(/<div id="search-results" hidden>/);
+    expect(search).toMatch(/<div id="search-results"[^>]*hidden>/);
     expect(search.indexOf('id="track-search"')).toBeLessThan(
       search.indexOf('id="search-results"')
     );
@@ -272,6 +280,13 @@ describe("map search", () => {
     expect(search).toMatch(/id="track-search"[^>]*aria-label="Find a track"/);
     // The magnifier is decoration beside that name, not a second reading of it.
     expect(search).toMatch(/<span class="search-icon" aria-hidden="true">/);
+  });
+
+  it("connects the field to its candidate dropdown and publishes open state", () => {
+    expect(search).toMatch(/id="track-search"[^>]*aria-controls="search-results"/);
+    expect(search).toMatch(/id="track-search"[^>]*aria-expanded="false"/);
+    expect(search).toMatch(/id="track-search"[^>]*aria-autocomplete="list"/);
+    expect(search).toMatch(/id="search-results"[^>]*aria-label="Search candidates"/);
   });
 });
 
@@ -380,6 +395,19 @@ describe("legend", () => {
     expect(legend.indexOf('id="playlist-filter"')).toBeLessThan(
       legend.indexOf('id="highlight-status"')
     );
+  });
+
+  it("offers genre without removing any existing color mode", () => {
+    for (const [value, label] of [
+      ["cluster", "Cluster"],
+      ["collection", "Collection"],
+      ["genre", "Genre"],
+      ["bpm", "BPM"],
+      ["key", "Key"],
+      ["year", "Year"],
+    ]) {
+      expect(legend).toContain(`<option value="${value}">${label}</option>`);
+    }
   });
 
   it("says what it collapses, and whether it is collapsed", () => {

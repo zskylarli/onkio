@@ -1,6 +1,9 @@
-import type { CollectionMeta, Library, Track } from "./types";
+import type { CollectionFormat, CollectionMeta, Library, Track } from "./types";
 import type { ParseWorkerMsg } from "./parse/parse.worker";
 import type { RekordboxWorkerMsg } from "./parse/rekordbox.worker";
+import type { RekordboxTxtWorkerMsg } from "./parse/rekordboxTxt.worker";
+import { detectCollectionFormat } from "./parse/format";
+import { decodeRekordboxTxt } from "./parse/rekordboxTxt";
 import type { EmbedRequest, EmbedResponse } from "./embed/embed.worker";
 import { buildFeatureMatrix } from "./features/matrix";
 import { Scatter, type ColorMode, type Theme } from "./render/scatter";
@@ -87,7 +90,11 @@ import {
   type Neighborhood,
 } from "./views/gaps";
 import { resolveHighlight, type HighlightRequest } from "./views/highlight";
-import { searchTracks, type SearchResults } from "./views/search";
+import {
+  nextSearchMenuDismissed,
+  searchTracks,
+  type SearchResults,
+} from "./views/search";
 import {
   decideHoverPlayback,
   playbackTransition,
@@ -325,19 +332,22 @@ async function importFiles(files: File[]): Promise<void> {
 }
 
 /**
- * The two supported exports are both `.xml` and the user shouldn't have to
- * tell us which is which — rekordbox announces itself in the root element,
- * within the first few hundred bytes.
+ * The user shouldn't have to name the format. XML roots distinguish Apple
+ * from rekordbox, while the fixed rekordbox TXT export has its own header.
  */
-async function detectFormat(file: File): Promise<"rekordbox" | "apple"> {
-  const head = await file.slice(0, 4096).text();
-  return head.includes("DJ_PLAYLISTS") ? "rekordbox" : "apple";
+async function detectFormat(file: File): Promise<CollectionFormat> {
+  const head = decodeRekordboxTxt(await file.slice(0, 4096).arrayBuffer());
+  return detectCollectionFormat(file.name, head);
 }
 
 async function importFile(file: File, mode: "add" | "replace"): Promise<void> {
   const format = await detectFormat(file);
   const parsed =
-    format === "rekordbox" ? await parseRekordboxFile(file) : await parseAppleFile(file);
+    format === "rekordbox"
+      ? await parseRekordboxFile(file)
+      : format === "rekordbox-txt"
+        ? await parseRekordboxTxtFile(file)
+        : await parseAppleFile(file);
   if (!parsed) return;
 
   let incoming = parsed.library;
@@ -460,6 +470,38 @@ function parseAppleFile(file: File): Promise<{ library: Library; detail: string 
   });
 }
 
+function parseRekordboxTxtFile(
+  file: File
+): Promise<{ library: Library; detail: string } | null> {
+  const status = $("import-status");
+  status.textContent = "Parsing rekordbox TXT collection…";
+  return new Promise((resolve) => {
+    const worker = new Worker(new URL("./parse/rekordboxTxt.worker.ts", import.meta.url), {
+      type: "module",
+    });
+    worker.onmessage = (event: MessageEvent<RekordboxTxtWorkerMsg>) => {
+      const message = event.data;
+      if (message.type === "error") {
+        status.textContent = `Parse failed: ${message.message}`;
+        worker.terminate();
+        resolve(null);
+        return;
+      }
+      worker.terminate();
+      const { stats, ...library } = message.collection;
+      const percent = (count: number) => Math.round((count / (stats.parsed || 1)) * 100);
+      resolve({
+        library,
+        detail:
+          `${stats.parsed.toLocaleString()} tracks — ` +
+          `${percent(stats.withBpm)}% BPM, ${percent(stats.withKey)}% key` +
+          (stats.skipped ? ` (${stats.skipped.toLocaleString()} invalid rows skipped)` : ""),
+      });
+    };
+    worker.postMessage({ file });
+  });
+}
+
 function importMode(): "add" | "replace" {
   const el = document.querySelector<HTMLInputElement>('input[name="import-mode"]:checked');
   return el?.value === "replace" ? "replace" : "add";
@@ -474,7 +516,7 @@ function importMode(): "add" | "replace" {
 async function adoptImport(
   incoming: Library,
   fileName: string,
-  format: "rekordbox" | "apple",
+  format: CollectionFormat,
   detail: string,
   mode: "add" | "replace",
   sampledFrom?: number
@@ -1397,6 +1439,11 @@ function collectionSwatch(i: number): string {
   return `<span class="coll-dot" style="background: rgb(${c.join(",")})"></span>`;
 }
 
+function collectionFormatLabel(format: CollectionFormat): string {
+  if (format === "rekordbox-txt") return "rekordbox TXT";
+  return format;
+}
+
 function renderCollections(): void {
   const list = $("collection-list");
   const cols = library?.collections ?? [];
@@ -1413,7 +1460,7 @@ function renderCollections(): void {
       (c, i) => `<div class="coll-row">
         ${collectionSwatch(i)}
         <span class="coll-name" title="${esc(c.label)}">${esc(c.label)}</span>
-        <span class="muted small">${c.format} · ${
+        <span class="muted small">${collectionFormatLabel(c.format)} · ${
           c.sampledFrom
             ? `${c.trackCount.toLocaleString()} of ${c.sampledFrom.toLocaleString()} sampled`
             : c.trackCount.toLocaleString()
@@ -1635,6 +1682,7 @@ let popoverTrack: Track | null = null;
 
 function openTrackPopover(track: Track): void {
   popoverTrack = track;
+  scatter?.setSelectedTrack(track.pid);
   tooltip.hidden = true;
   closeGapPopover();
   renderTrackPopover();
@@ -1642,6 +1690,7 @@ function openTrackPopover(track: Track): void {
 
 function closeTrackPopover(): void {
   popoverTrack = null;
+  scatter?.setSelectedTrack(null);
   $("track-popover").hidden = true;
 }
 
@@ -1986,6 +2035,8 @@ function renderLegend(): void {
   const mode = $<HTMLSelectElement>("color-mode").value;
   const titles: Record<string, string> = {
     cluster: "Clusters",
+    collection: "Collections",
+    genre: "Genres",
     bpm: "BPM",
     key: "Key (Camelot)",
     year: "Decade",
@@ -1993,7 +2044,9 @@ function renderLegend(): void {
   $("legend-title").textContent = titles[mode] ?? "Legend";
 
   const shown = entries.slice(0, 16);
-  const hiddenCount = entries.length - shown.length;
+  const omitted = entries.slice(shown.length);
+  const hiddenCount = omitted.length;
+  const hiddenTracks = omitted.reduce((sum, entry) => sum + entry.count, 0);
   $("legend-items").innerHTML =
     shown
       .map(
@@ -2004,7 +2057,9 @@ function renderLegend(): void {
         </div>`
       )
       .join("") +
-    (hiddenCount > 0 ? `<div class="legend-row muted small">+${hiddenCount} more</div>` : "");
+    (hiddenCount > 0
+      ? `<div class="legend-row muted small">+${hiddenCount} more${mode === "genre" ? ` genres · ${hiddenTracks.toLocaleString()} tracks` : ""}</div>`
+      : "");
 }
 
 // ---------- set builder (§7.1) ----------
@@ -2385,20 +2440,59 @@ function applyHighlight(): void {
 const SEARCH_LIST_LIMIT = 20;
 
 const searchInput = $<HTMLInputElement>("track-search");
+const searchResults = $("search-results");
 let searchHits: SearchResults = { matches: [], shown: [] };
 let searchTimer: number | undefined;
+/** A chosen result closes the menu without throwing away the standing search. */
+let searchResultsDismissed = false;
 
 searchInput.addEventListener("input", () => {
   // A keystroke rescans the library and rewrites the map's highlight, so it
   // waits for a pause in typing rather than running per character.
   window.clearTimeout(searchTimer);
+  searchResultsDismissed = nextSearchMenuDismissed(searchResultsDismissed, "query-changed");
+  scatter?.setExternalHover(null);
+  // Do not leave candidates for the previous query actionable during debounce.
+  searchResults.hidden = true;
+  searchInput.setAttribute("aria-expanded", "false");
   searchTimer = window.setTimeout(runSearch, 120);
+});
+
+searchInput.addEventListener("focus", () => {
+  if (!searchInput.value.trim()) return;
+  searchResultsDismissed = nextSearchMenuDismissed(searchResultsDismissed, "search-focused");
+  renderSearchResults(searchInput.value.trim());
 });
 
 searchInput.addEventListener("keydown", (e) => {
   // The global handler ignores keys typed into inputs, so Escape only reaches
   // the search from here.
   if (e.key === "Escape") clearSearch();
+});
+
+function searchHit(target: EventTarget | null): HTMLButtonElement | null {
+  return target instanceof Element ? target.closest<HTMLButtonElement>(".search-hit") : null;
+}
+
+// Delegated once: rendering replaces candidate buttons on every query.
+searchResults.addEventListener("pointerover", (event) => {
+  scatter?.setExternalHover(searchHit(event.target)?.dataset.pid ?? null);
+});
+searchResults.addEventListener("pointerleave", () => scatter?.setExternalHover(null));
+searchResults.addEventListener("focusin", (event) => {
+  scatter?.setExternalHover(searchHit(event.target)?.dataset.pid ?? null);
+});
+searchResults.addEventListener("focusout", (event) => {
+  // Moving directly to another candidate is a switch, not a moment with no
+  // candidate. focusin will install the new one immediately afterwards.
+  if (!searchHit(event.relatedTarget)) scatter?.setExternalHover(null);
+});
+searchResults.addEventListener("click", (event) => {
+  const hit = searchHit(event.target);
+  const pid = hit?.dataset.pid;
+  if (!pid) return;
+  focusTrack(pid);
+  dismissSearchResults();
 });
 
 function runSearch(): void {
@@ -2413,14 +2507,27 @@ function runSearch(): void {
 }
 
 function clearSearch(): void {
-  if (!searchInput.value) return;
+  searchResultsDismissed = nextSearchMenuDismissed(searchResultsDismissed, "cleared");
+  scatter?.setExternalHover(null);
+  if (!searchInput.value) {
+    renderSearchResults("");
+    return;
+  }
   searchInput.value = "";
   runSearch();
 }
 
+function dismissSearchResults(): void {
+  searchResultsDismissed = nextSearchMenuDismissed(searchResultsDismissed, "result-selected");
+  scatter?.setExternalHover(null);
+  searchResults.hidden = true;
+  searchInput.setAttribute("aria-expanded", "false");
+}
+
 function renderSearchResults(query: string): void {
-  const el = $("search-results");
-  el.hidden = query === "";
+  const el = searchResults;
+  el.hidden = query === "" || searchResultsDismissed;
+  searchInput.setAttribute("aria-expanded", String(!el.hidden));
   if (!query) {
     el.innerHTML = "";
     return;
@@ -2446,7 +2553,10 @@ function renderSearchResults(query: string): void {
       : "");
 
   el.querySelectorAll<HTMLButtonElement>(".search-hit").forEach((btn) => {
-    btn.addEventListener("click", () => focusTrack(btn.dataset.pid!));
+    btn.setAttribute(
+      "aria-label",
+      `${btn.querySelector(".hit-name")?.textContent ?? ""}, ${btn.querySelector(".hit-artist")?.textContent ?? ""}`
+    );
   });
 }
 
@@ -2584,6 +2694,8 @@ Object.assign(window, {
       theme: currentTheme(),
       browsing,
       hoveredPid,
+      emphasizedPid: scatter?.getHoveredTrackPid() ?? null,
+      selectedPid: popoverTrack?.pid ?? null,
       lasso: lassoMode,
       setPanel: setPanelIsOpen(),
       set: setList.map((t) => t.pid),

@@ -14,8 +14,11 @@ import {
   collectionColor,
   decadeColor,
   decadeOf,
+  genreColor,
+  genreDisplayLabel,
   keyColor,
   makeBpmScale,
+  normalizeGenre,
   type BpmScale,
   type RGB,
   type Theme,
@@ -36,7 +39,7 @@ import {
  * `legendEntries()` so the map always ships with a key.
  */
 
-export type ColorMode = "cluster" | "collection" | "bpm" | "key" | "year";
+export type ColorMode = "cluster" | "collection" | "genre" | "bpm" | "key" | "year";
 export type { Theme };
 
 export type ScatterState = {
@@ -157,6 +160,8 @@ export class Scatter {
   private dataBounds: Bounds | null = null;
   /** the dot under the pointer, drawn and animated on its own (see hoverLayers) */
   private hovered: { pid: string; index: number } | null = null;
+  /** the track whose detail popover is open */
+  private selectedPid: string | null = null;
   private pulseHandle: number | null = null;
   private pulseStart = 0;
   private reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)") ?? null;
@@ -184,6 +189,7 @@ export class Scatter {
   /** the same path in screen pixels, which is where thinning it is meaningful */
   private lassoScreen: Point[] = [];
   private lassoDrawing = false;
+  private clickStart: Point | null = null;
   private cb: Callbacks;
 
   constructor(canvas: HTMLCanvasElement, cb: Callbacks = {}) {
@@ -242,6 +248,9 @@ export class Scatter {
     canvas.addEventListener("pointermove", this.onLassoMove);
     canvas.addEventListener("pointerup", this.onLassoUp);
     canvas.addEventListener("pointercancel", this.onLassoCancel);
+    // deck does not consistently deliver an `onClick` callback when no layer
+    // was picked. The native click fills that blank-map case only.
+    canvas.addEventListener("click", this.onEmptyClick);
   }
 
   // ---------- freehand selection ----------
@@ -288,7 +297,11 @@ export class Scatter {
   }
 
   private onLassoDown = (e: PointerEvent): void => {
-    if (!this.lassoMode || e.button !== 0) return;
+    if (e.button !== 0) return;
+    if (!this.lassoMode) {
+      this.clickStart = [e.clientX, e.clientY];
+      return;
+    }
     // Deck's controller never learns the drag began, so it cannot pan through
     // it. That is not only about feel: the outline is accumulated in world
     // coordinates, so a camera that moved mid-gesture would smear the polygon
@@ -330,6 +343,19 @@ export class Scatter {
   private onLassoCancel = (): void => {
     if (!this.lassoDrawing) return;
     this.cancelLasso();
+  };
+
+  private onEmptyClick = (event: MouseEvent): void => {
+    if (this.lassoMode || !this.clickStart) return;
+    const [startX, startY] = this.clickStart;
+    this.clickStart = null;
+    if (Math.hypot(event.clientX - startX, event.clientY - startY) > 4) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const picked = this.deck.pickMultipleObjects({ x, y, radius: 6, depth: 4 });
+    if (picked.some((info) => info.layer?.id === "tracks" || info.layer?.id === "gaps")) return;
+    this.cb.onClick?.(null, x, y);
   };
 
   /** Screen position, thinned, then kept in world units. Reports whether it grew. */
@@ -431,6 +457,34 @@ export class Scatter {
     this.highlighted = new Set(pids);
     this.dimUnhighlighted = dimOthers;
     this.update();
+  }
+
+  /** Mark exactly one track while its detail popover is open. */
+  setSelectedTrack(pid: string | null): void {
+    if (this.selectedPid === pid) return;
+    this.selectedPid = pid;
+    this.draw();
+  }
+
+  /**
+   * Give a track the same transient pulse as a canvas hover without reporting
+   * it through `onHover`. HTML controls such as search results can point back
+   * into the map without pretending to have pointer coordinates or starting
+   * Browsing-mode audio.
+   */
+  setExternalHover(pid: string | null): void {
+    const state = this.state;
+    if (!state || pid === null) {
+      this.setHovered(null, -1);
+      return;
+    }
+    const index = state.tracks.findIndex((track) => track.pid === pid);
+    this.setHovered(index < 0 ? null : state.tracks[index], index);
+  }
+
+  /** Exposed for lightweight browser verification of the visual hover state. */
+  getHoveredTrackPid(): string | null {
+    return this.hovered?.pid ?? null;
   }
 
   setGaps(gaps: GapMarker[]): void {
@@ -589,6 +643,9 @@ export class Scatter {
         rgb = ci === undefined ? null : collectionColor(ci);
         break;
       }
+      case "genre":
+        rgb = track.genre ? genreColor(track.genre) : null;
+        break;
       case "bpm":
         rgb = track.bpm
           ? bpmColor(bpmBin(track.bpm, this.bpmScale), this.bpmScale.count)
@@ -648,6 +705,36 @@ export class Scatter {
           if (count) entries.push({ label: c.label, color: collectionColor(i), count });
         });
         break;
+      }
+      case "genre": {
+        const counts = new Map<string, { count: number; labels: Set<string> }>();
+        for (const track of s.tracks) {
+          const genre = normalizeGenre(track.genre);
+          if (!genre) {
+            missing++;
+            continue;
+          }
+          const entry = counts.get(genre.key) ?? { count: 0, labels: new Set<string>() };
+          entry.count++;
+          entry.labels.add(genre.label);
+          counts.set(genre.key, entry);
+        }
+        for (const [key, entry] of counts) {
+          entries.push({
+            label: genreDisplayLabel(entry.labels),
+            color: genreColor(key),
+            count: entry.count,
+          });
+        }
+        entries.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+        if (missing > 0) {
+          entries.push({
+            label: "Unknown genre",
+            color: NO_DATA[this.theme],
+            count: missing,
+          });
+        }
+        return entries;
       }
       case "bpm": {
         const scale = this.bpmScale;
@@ -834,8 +921,68 @@ export class Scatter {
 
   private draw(): void {
     this.deck.setProps({
-      layers: [...this.baseLayers, ...this.hoverLayers(), ...this.lassoLayers()],
+      layers: [
+        ...this.baseLayers,
+        ...this.selectedLayers(),
+        ...this.hoverLayers(),
+        ...this.lassoLayers(),
+      ],
     });
+  }
+
+  /**
+   * A fixed-pixel halo and four short ticks. Their anchor is the selected
+   * track's world coordinate, so deck keeps them attached through camera and
+   * layout changes without making any part of the marker pickable.
+   */
+  private selectedLayers(): Layer[] {
+    const state = this.state;
+    if (!state || !this.selectedPid) return [];
+    const index = state.tracks.findIndex((track) => track.pid === this.selectedPid);
+    if (index < 0) return [];
+    const at: [number, number] = [state.coords[index * 2], state.coords[index * 2 + 1]];
+    const [r, g, b] = LASSO_COLOR[this.theme];
+    const tickData = [
+      { at, text: "—", offset: [-10, 0] as [number, number] },
+      { at, text: "—", offset: [10, 0] as [number, number] },
+      { at, text: "|", offset: [0, -10] as [number, number] },
+      { at, text: "|", offset: [0, 10] as [number, number] },
+    ];
+    return [
+      new ScatterplotLayer<[number, number]>({
+        id: "selected-halo",
+        data: [at],
+        getPosition: (position: [number, number]) => position,
+        getRadius: 7,
+        radiusUnits: "pixels",
+        filled: true,
+        stroked: true,
+        getFillColor: [r, g, b, 32],
+        getLineColor: [r, g, b, 255],
+        getLineWidth: 2,
+        lineWidthUnits: "pixels",
+        pickable: false,
+      }),
+      new TextLayer<(typeof tickData)[number]>({
+        id: "selected-crosshair",
+        data: tickData,
+        getPosition: (tick) => tick.at,
+        getText: (tick) => tick.text,
+        getPixelOffset: (tick) => tick.offset,
+        getSize: 11,
+        sizeUnits: "pixels",
+        getColor: [r, g, b, 255],
+        getTextAnchor: "middle",
+        getAlignmentBaseline: "center",
+        fontFamily: "DM Mono, monospace",
+        fontWeight: 500,
+        fontSettings: { sdf: true },
+        characterSet: ["—", "|"],
+        outlineWidth: 1,
+        outlineColor: this.theme === "dark" ? [12, 16, 24, 220] : [255, 252, 246, 220],
+        pickable: false,
+      }),
+    ];
   }
 
   /**

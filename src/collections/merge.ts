@@ -199,7 +199,11 @@ export function ensureCollections(lib: Library, fallbackLabel = "Imported librar
           {
             id,
             label: fallbackLabel,
-            format: lib.tracks.some((t) => t.pid.startsWith("rb:")) ? "rekordbox" : "apple",
+            format: lib.tracks.some((t) => t.pid.startsWith("rbtxt:"))
+              ? "rekordbox-txt"
+              : lib.tracks.some((t) => t.pid.startsWith("rb:"))
+                ? "rekordbox"
+                : "apple",
             trackCount: lib.tracks.length,
             addedAt: new Date().toISOString(),
           },

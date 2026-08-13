@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { searchTracks } from "../src/views/search";
+import { nextSearchMenuDismissed, searchTracks } from "../src/views/search";
 import type { Track } from "../src/types";
 
 let seq = 0;
@@ -101,5 +101,20 @@ describe("searchTracks", () => {
   it("returns matches in library order so the map highlight is stable", () => {
     const r = searchTracks(LIBRARY, "t");
     expect([...r.matches]).toEqual([...r.matches].sort((a, b) => a - b));
+  });
+});
+
+describe("search result menu state", () => {
+  it("dismisses only the candidate menu when a result is selected", () => {
+    expect(nextSearchMenuDismissed(false, "result-selected")).toBe(true);
+  });
+
+  it("reopens for a changed query or intentional return to the field", () => {
+    expect(nextSearchMenuDismissed(true, "query-changed")).toBe(false);
+    expect(nextSearchMenuDismissed(true, "search-focused")).toBe(false);
+  });
+
+  it("returns to its initial open state when search is cleared", () => {
+    expect(nextSearchMenuDismissed(true, "cleared")).toBe(false);
   });
 });
