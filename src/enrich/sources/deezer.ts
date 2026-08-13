@@ -32,11 +32,12 @@ type DeezerResult = {
   id: number;
   title?: string;
   preview?: string;
+  duration?: number;
   artist?: { name?: string };
-  album?: { id?: number };
+  album?: { id?: number; title?: string };
 };
 type DeezerSearch = { data?: DeezerResult[] };
-type DeezerTrack = { bpm?: number };
+type DeezerTrack = { bpm?: number; preview?: string; release_date?: string };
 type DeezerAlbum = { label?: string };
 
 const albumLabels = new Map<number, Promise<string | undefined>>();
@@ -65,6 +66,89 @@ async function albumLabel(id: number, artist?: string): Promise<string | undefin
 /** Test isolation; production keeps the cache for the lifetime of the tab. */
 export function clearDeezerAlbumCache(): void {
   albumLabels.clear();
+}
+
+/** One catalogue result, in this app's vocabulary rather than Deezer's. */
+export type DeezerHit = {
+  id: number;
+  title: string;
+  artist?: string;
+  album?: string;
+  albumId?: number;
+  durationMs?: number;
+  previewUrl?: string;
+};
+
+/** Deezer reports 0 for "we don't know", which is not a tempo. */
+function realBpm(bpm: number | undefined): number | undefined {
+  return bpm && bpm > 0 ? bpm : undefined;
+}
+
+/**
+ * Free text straight from a search box, rather than a known artist and title.
+ *
+ * The enrichment path scores candidates against the track it already has
+ * (`pickBest`) because a wrong BPM silently ruins a mix. Here there is nothing
+ * to score against — the user typed the query and is about to read the results
+ * — so the whole page is returned and the choice is theirs. Same endpoint and
+ * the same limiter, so an interactive search queues behind a lookup pass
+ * instead of racing it into Deezer's quota.
+ */
+export async function searchDeezerTracks(
+  query: string,
+  limit = 8
+): Promise<DeezerHit[]> {
+  const q = query.trim();
+  if (!q) return [];
+  await limiter.acquire();
+  const search = await jsonp<DeezerSearch>(
+    `https://api.deezer.com/search?output=jsonp&limit=${limit}&q=${encodeURIComponent(q)}`
+  );
+  return (search.data ?? [])
+    .filter((result) => typeof result.id === "number" && !!result.title)
+    .map((result) => ({
+      id: result.id,
+      title: result.title!,
+      artist: result.artist?.name,
+      album: result.album?.title,
+      albumId: result.album?.id,
+      durationMs: result.duration ? result.duration * 1000 : undefined,
+      previewUrl: result.preview || undefined,
+    }));
+}
+
+/**
+ * The fields a search result does not carry: tempo, release year and the album
+ * label. Two calls at most, both through the shared limiter, and the label goes
+ * through the same per-album cache the enrichment path fills.
+ *
+ * Musical key is not among them. Deezer does not publish one, so an external
+ * track arrives without a key until its audio is analyzed — which is the same
+ * position most of an Apple Music import starts in.
+ */
+export async function deezerTrackFacts(
+  id: number,
+  albumId?: number,
+  artist?: string
+): Promise<{ bpm?: number; year?: number; previewUrl?: string; label?: string }> {
+  const out: { bpm?: number; year?: number; previewUrl?: string; label?: string } = {};
+  try {
+    await limiter.acquire();
+    const track = await jsonp<DeezerTrack>(
+      `https://api.deezer.com/track/${id}?output=jsonp`
+    );
+    out.bpm = realBpm(track.bpm);
+    const year = Number(track.release_date?.slice(0, 4));
+    if (Number.isFinite(year) && year > 1900) out.year = year;
+    if (track.preview) out.previewUrl = track.preview;
+  } catch {
+    // Every one of these is additive. A track with a preview and no tempo is
+    // still worth placing; refusing to place it would be the worse answer.
+  }
+  if (albumId !== undefined) {
+    out.label = await albumLabel(albumId, artist).catch(() => undefined);
+  }
+  return out;
 }
 
 export async function lookupDeezer(
@@ -97,8 +181,9 @@ export async function lookupDeezer(
     `https://api.deezer.com/track/${best.item.id}?output=jsonp`
   );
   // Deezer reports 0 for "unknown" rather than omitting the field.
-  if (track.bpm && track.bpm > 0) {
-    out.bpm = track.bpm;
+  const bpm = realBpm(track.bpm);
+  if (bpm) {
+    out.bpm = bpm;
     out.confidence = { bpm: 0.9 };
   }
 

@@ -235,3 +235,12 @@ export const LASSO_COLOR: Record<Theme, RGB> = {
   dark: [94, 234, 212],
   light: [161, 89, 31],
 };
+/**
+ * Tracks found outside the library, ringed rather than filled. Violet is the
+ * one hue neither the accent (teal) nor the gap marker (amber) uses, so a ring
+ * cannot be mistaken for a selection or for a hole in the crate.
+ */
+export const EXTERNAL_COLOR: Record<Theme, RGB> = {
+  dark: [167, 139, 250],
+  light: [109, 40, 217],
+};

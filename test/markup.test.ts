@@ -178,7 +178,7 @@ describe("demo collection button", () => {
       HTML.indexOf("</label>", HTML.indexOf('<label class="file-drop"'))
     );
     expect(label).not.toContain('id="demo-load"');
-    // Still adjacent: between the drop box and the add/replace choice.
+    // Still adjacent: between the drop box and the load actions.
     expect(importSection.indexOf('id="file-drop"')).toBeLessThan(
       importSection.indexOf('id="demo-load"')
     );
@@ -200,7 +200,25 @@ describe("library file picker", () => {
   it("accepts both XML and fixed-format rekordbox TXT exports", () => {
     expect(HTML).toMatch(/id="file-input"[^>]*accept="[^"]*\.xml[^"]*\.txt[^"]*"/);
     expect(HTML).toContain("Drop collection XML or TXT files");
+    expect(HTML).toContain('id="file-drop-label"');
     expect(HTML).toContain("rekordbox TXT exports");
+  });
+});
+
+describe("next-file import mode", () => {
+  const mode = HTML.slice(
+    HTML.indexOf('id="import-mode"'),
+    HTML.indexOf('id="collection-list"')
+  );
+
+  it("is two side-by-side load actions, hidden until a file is chosen", () => {
+    expect(mode).toContain('id="import-mode" hidden');
+    expect(mode).toContain(">Add to map<");
+    expect(mode).toContain(">New map<");
+    expect(mode).not.toContain("Files you add next will");
+    expect(mode).not.toContain('type="radio"');
+    expect(mode).not.toContain("aria-pressed");
+    expect(mode.indexOf('id="import-add"')).toBeLessThan(mode.indexOf('id="import-replace"'));
   });
 });
 

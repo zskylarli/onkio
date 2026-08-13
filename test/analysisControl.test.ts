@@ -3,7 +3,9 @@ import {
   ANALYSIS_IDLE_LABEL,
   ANALYSIS_STOP_LABEL,
   analysisLookupTargets,
+  analysisNeededCount,
   analysisTargets,
+  describeAnalysisNeeded,
 } from "../src/dsp/analysisControl";
 import type { Track } from "../src/types";
 
@@ -66,5 +68,15 @@ describe("unified analysis control", () => {
       "label",
       "metadata",
     ]);
+  });
+
+  it("counts unique songs Analyze would work on, in one sentence", () => {
+    const labelled = track("labelled", { bpm: 124, key: "8A", label: "Toolroom" });
+    const noLabel = track("label", { bpm: 124, key: "8A" });
+    const inView = track("sound", { bpm: 120, key: "8A", label: "Anjunadeep" });
+    expect(analysisNeededCount([labelled, noLabel, inView], ["sound"])).toBe(2);
+    expect(describeAnalysisNeeded(0)).toBe("nothing needs analysis");
+    expect(describeAnalysisNeeded(1)).toBe("1 song needs analysis");
+    expect(describeAnalysisNeeded(1247)).toBe("1,247 songs need analysis");
   });
 });

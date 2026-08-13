@@ -41,7 +41,7 @@
           </div>
           <label class="file-drop" id="file-drop">
             <input type="file" id="file-input" accept=".xml,.txt,text/xml,text/plain" multiple />
-            <span>Drop collection XML or TXT files here or click to choose</span>
+            <span id="file-drop-label">Drop collection XML or TXT files here or click to choose</span>
           </label>
           <!-- Outside the label on purpose: a click anywhere inside it is
                forwarded to the file input, so a demo button in there would open
@@ -52,17 +52,10 @@
               <span id="demo-load-label">No file? Load the demo collection</span>
             </button>
           </p>
-          <fieldset id="import-mode" hidden>
-            <legend class="muted small">Files you add next will</legend>
-            <label class="radio">
-              <input type="radio" name="import-mode" value="add" checked />
-              <span>join what is already loaded</span>
-            </label>
-            <label class="radio">
-              <input type="radio" name="import-mode" value="replace" />
-              <span>replace what is loaded</span>
-            </label>
-          </fieldset>
+          <div id="import-mode" hidden role="group" aria-label="Load the chosen files">
+            <button type="button" id="import-add">Add to map</button>
+            <button type="button" id="import-replace">New map</button>
+          </div>
           <div id="collection-list" hidden></div>
           <!-- Only ever on screen while an import is waiting on the answer:
                filled and cleared by offerDownsample in src/main.ts. -->
@@ -135,6 +128,7 @@
               <details>
                 <summary>GetSongBPM (optional key)</summary>
                 <input type="password" id="gsb-key" placeholder="API key" />
+                <div id="gsb-key-status" class="muted small" role="status" aria-live="polite"></div>
                 <input type="url" id="gsb-proxy" placeholder="Optional proxy URL" />
                 <p class="muted small">
                   BPM &amp; key data from

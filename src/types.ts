@@ -20,8 +20,9 @@ export type Track = {
   tags?: string[];
   /** Record label / imprint, cleaned for display and vocabulary matching. */
   label?: string;
-  /** Where bpm/key/label came from. */
-  source?: { bpm?: string; key?: string; label?: string };
+  /** Where bpm/key/label/genre came from. `genre: "projected"` marks one
+   * carried over from a track's neighbours rather than stated by a catalogue. */
+  source?: { bpm?: string; key?: string; label?: string; genre?: string };
   previewUrl?: string;
   /** Deezer's track id. Its preview URLs are signed and live 15 minutes, so the
    * id rather than the URL is what makes audio obtainable later (enrich/preview). */
@@ -33,9 +34,21 @@ export type Track = {
   /** Which imported collection this track came from (`CollectionMeta.id`).
    * Absent on libraries saved before collections existed. */
   collection?: string;
+  /**
+   * Found in an online catalogue rather than imported from a collection. This
+   * never clears: a track from a genre the crate does not hold is placed beside
+   * the nearest thing it does hold, and the map should go on saying so.
+   */
+  external?: boolean;
+  /**
+   * Its position was projected onto an embedding it was not part of
+   * (src/embed/project.ts), rather than fitted with everything else. Cleared
+   * when a later embedding run does include it.
+   */
+  projected?: boolean;
 };
 
-export type CollectionFormat = "rekordbox" | "rekordbox-txt" | "apple";
+export type CollectionFormat = "rekordbox" | "rekordbox-txt" | "apple" | "external";
 
 /** One imported file, kept as provenance after a union (src/collections). */
 export type CollectionMeta = {

@@ -2,6 +2,7 @@ import type { FeatureLookup, Track } from "../types";
 import { jsonp } from "./sources/jsonp";
 import { deezerLimiter, lookupDeezer } from "./sources/deezer";
 import { lookupFeatures } from "./adapter";
+import type { Field } from "./fields";
 
 /**
  * Whether a preview can actually be fetched right now, which is a different
@@ -53,7 +54,11 @@ export type PreviewDeps = {
   /** uncached Deezer search, for tracks whose stored URL predates the id */
   search: (artist: string | undefined, title: string) => Promise<FeatureLookup | null>;
   /** cached cascade, for tracks with no stored URL at all */
-  lookup: (artist: string | undefined, title: string) => Promise<FeatureLookup | null>;
+  lookup: (
+    artist: string | undefined,
+    title: string,
+    need?: readonly Field[]
+  ) => Promise<FeatureLookup | null>;
   now: () => number;
 };
 
@@ -105,7 +110,11 @@ export async function resolvePreviewUrl(
 
   let candidate = track.previewUrl;
   if (!candidate) {
-    const found = await d.lookup(track.artist, track.name).catch(() => null);
+    // Audio is the only thing wanted here, so the cascade skips the tiers that
+    // cannot produce it — GetSongBPM has no previews and costs 1.3 s to say so.
+    const found = await d
+      .lookup(track.artist, track.name, ["previewUrl"])
+      .catch(() => null);
     if (found?.deezerId) track.deezerId = found.deezerId;
     if (found?.previewUrl) {
       track.previewUrl = found.previewUrl;

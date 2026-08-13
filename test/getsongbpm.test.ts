@@ -23,8 +23,10 @@ vi.mock("../src/enrich/sources/limiter", () => ({
 }));
 
 import {
+  getSongBpmApiKey,
   isSongBpmEnabled,
   lookupGetSongBpm,
+  saveSongBpmApiKey,
   setSongBpmApiKey,
   setSongBpmProxy,
 } from "../src/enrich/sources/getsongbpm";
@@ -112,6 +114,27 @@ describe("getsongbpm source", () => {
     setSongBpmApiKey("k123");
     stubFetch({ search: { error: "no result" } });
     expect(await lookupGetSongBpm("John Craigie", "I Am California")).toBeNull();
+  });
+});
+
+/**
+ * The field that takes the key has to say something, because saving one has no
+ * other visible effect: it promotes this source to the first lookup tier, which
+ * only shows itself during a run.
+ */
+describe("saving the key", () => {
+  it("persists the key and reports the save, switching the tier on at once", () => {
+    expect(saveSongBpmApiKey("  k123  ")).toBe("saved");
+    expect(getSongBpmApiKey()).toBe("k123");
+    // Read from storage per lookup, so the tier it unlocks needs no reload.
+    expect(isSongBpmEnabled()).toBe(true);
+  });
+
+  it("calls an emptied field cleared rather than saved", () => {
+    saveSongBpmApiKey("k123");
+    expect(saveSongBpmApiKey("   ")).toBe("cleared");
+    expect(getSongBpmApiKey()).toBeNull();
+    expect(isSongBpmEnabled()).toBe(false);
   });
 });
 

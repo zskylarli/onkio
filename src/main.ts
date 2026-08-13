@@ -13,6 +13,11 @@ import {
   transferLabels,
   PROJECTION_NEIGHBORS,
 } from "./embed/project";
+import {
+  attachProjectedTrack,
+  reprojectAttachedTrack,
+  type Embedding,
+} from "./embed/attach";
 import { Scatter, type ColorMode, type Theme } from "./render/scatter";
 import { EnrichmentQueue } from "./enrich/queue";
 import { DspPool, type AudioSource } from "./dsp/pool";
@@ -20,11 +25,13 @@ import {
   ANALYSIS_IDLE_LABEL,
   ANALYSIS_STOP_LABEL,
   analysisLookupTargets,
+  analysisNeededCount,
   analysisTargets,
+  describeAnalysisNeeded,
 } from "./dsp/analysisControl";
 import { getSourceStats } from "./enrich/adapter";
 import {
-  setSongBpmApiKey,
+  saveSongBpmApiKey,
   getSongBpmApiKey,
   setSongBpmProxy,
   getSongBpmProxy,
@@ -83,7 +90,6 @@ import {
 import {
   collectionCoverage,
   describeLabelInfluence,
-  describeOutstanding,
   describePlaylistInfluence,
   describeSoundInfluence,
   needsLookup,
@@ -103,6 +109,16 @@ import {
   searchTracks,
   type SearchResults,
 } from "./views/search";
+import {
+  externalSearchNote,
+  localTitleIndex,
+  markLocalDuplicates,
+  nextExternalSearch,
+  OFF as EXTERNAL_SEARCH_OFF,
+  type ExternalCandidate,
+  type ExternalSearchState,
+} from "./views/externalSearch";
+import { deezerTrackFacts, searchDeezerTracks } from "./enrich/sources/deezer";
 import {
   decideHoverPlayback,
   playbackTransition,
@@ -272,8 +288,41 @@ $("sidebar").addEventListener("scroll", repositionPopovers, { passive: true });
 
 const fileInput = $<HTMLInputElement>("file-input");
 const fileDrop = $("file-drop");
+const fileDropLabel = $("file-drop-label");
+const FILE_DROP_EMPTY =
+  fileDropLabel.textContent ?? "Drop collection XML or TXT files here or click to choose";
+const importAdd = $<HTMLButtonElement>("import-add");
+const importReplace = $<HTMLButtonElement>("import-replace");
+
+/** Chosen but not yet loaded. The drop box shows the names; the two buttons load them. */
+let stagedFiles: File[] = [];
+let importBusy = false;
+
+function renderStagedFiles(): void {
+  const empty = stagedFiles.length === 0;
+  $("import-mode").hidden = empty;
+  importAdd.disabled = empty || importBusy;
+  importReplace.disabled = empty || importBusy;
+  fileDrop.classList.toggle("has-files", !empty);
+  fileDropLabel.textContent = empty
+    ? FILE_DROP_EMPTY
+    : stagedFiles.map((file) => file.name).join("\n");
+}
+
+function stageFiles(files: File[]): void {
+  if (importBusy || files.length === 0) return;
+  stagedFiles = files;
+  renderStagedFiles();
+}
+
+function clearStagedFiles(): void {
+  stagedFiles = [];
+  fileInput.value = "";
+  renderStagedFiles();
+}
+
 fileInput.addEventListener("change", () => {
-  if (fileInput.files?.length) void importFiles([...fileInput.files]);
+  if (fileInput.files?.length) stageFiles([...fileInput.files]);
 });
 fileDrop.addEventListener("dragover", (e) => {
   e.preventDefault();
@@ -284,8 +333,24 @@ fileDrop.addEventListener("drop", (e) => {
   e.preventDefault();
   fileDrop.classList.remove("dragover");
   const files = e.dataTransfer?.files;
-  if (files?.length) void importFiles([...files]);
+  if (files?.length) stageFiles([...files]);
 });
+
+async function commitStaged(mode: "add" | "replace"): Promise<void> {
+  if (importBusy || stagedFiles.length === 0) return;
+  const files = stagedFiles;
+  importBusy = true;
+  renderStagedFiles();
+  try {
+    await importFiles(files, mode);
+  } finally {
+    importBusy = false;
+    clearStagedFiles();
+  }
+}
+
+importAdd.addEventListener("click", () => void commitStaged("add"));
+importReplace.addEventListener("click", () => void commitStaged("replace"));
 
 // ---------- demo collection ----------
 
@@ -296,10 +361,9 @@ const DEMO_LABEL = demoLabel.textContent ?? "Load the demo collection";
 demoBtn.addEventListener("click", () => void loadDemoCollection());
 
 /**
- * The bundled export goes through `importFiles` like anything the user picks,
- * so the add/replace choice, the collection metadata, the coverage rows and
- * the undo all behave the same way. Wrapping the fetched bytes in a `File` is
- * the whole of the difference.
+ * The bundled export goes through `importFiles` like anything the user commits,
+ * so collection metadata, coverage rows and undo all behave the same way.
+ * Wrapping the fetched bytes in a `File` is the whole of the difference.
  */
 async function loadDemoCollection(): Promise<void> {
   const status = $("import-status");
@@ -308,7 +372,8 @@ async function loadDemoCollection(): Promise<void> {
   try {
     const res = await fetch(demoCollectionUrl(import.meta.env.BASE_URL));
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`.trim());
-    await importFiles([demoImportFile(await res.blob())]);
+    clearStagedFiles();
+    await importFiles([demoImportFile(await res.blob())], "replace");
   } catch (err) {
     // A missing file in a deployment looks exactly like a working button that
     // does nothing, which is the one outcome worth spelling out.
@@ -332,21 +397,18 @@ function setDemoBusy(busy: boolean): void {
 }
 
 /**
- * Several files dropped together are imported one after another, not in
+ * Several files committed together are imported one after another, not in
  * parallel: each one is a union against the library the previous one produced,
  * and two workers racing to append to the same library would lose tracks.
  *
- * Only the first file honours the add/replace choice. A drop of three files
+ * Only the first file honours Add to map vs New map. A drop of three files
  * means "these three together", so files two and three always join the first
  * rather than each replacing it in turn.
  */
-async function importFiles(files: File[]): Promise<void> {
+async function importFiles(files: File[], mode: "add" | "replace" = "add"): Promise<void> {
   for (const [i, file] of files.entries()) {
-    await importFile(file, i === 0 ? importMode() : "add");
+    await importFile(file, i === 0 ? mode : "add");
   }
-  // Re-importing the same path should re-fire `change`, which it won't if the
-  // input still holds the old selection.
-  fileInput.value = "";
 }
 
 /**
@@ -520,11 +582,6 @@ function parseRekordboxTxtFile(
   });
 }
 
-function importMode(): "add" | "replace" {
-  const el = document.querySelector<HTMLInputElement>('input[name="import-mode"]:checked');
-  return el?.value === "replace" ? "replace" : "add";
-}
-
 /**
  * Replace the loaded library or union the new file into it. Which one it was
  * has to be unmissable afterwards — a user who drops a second export and
@@ -600,6 +657,13 @@ $("undo-import").addEventListener("click", async () => {
 
 async function onLibraryLoaded(input: Library): Promise<void> {
   const lib = ensureCollections(input);
+  if (lib.collections) {
+    lib.collections = lib.collections.map((collection) =>
+      collection.id === EXTERNAL_COLLECTION_ID
+        ? { ...collection, label: EXTERNAL_COLLECTION_LABEL }
+        : collection
+    );
+  }
   if (
     neighborCollection !== null &&
     !lib.collections?.some((collection) => collection.id === neighborCollection)
@@ -1170,6 +1234,11 @@ function runEmbedding(): void {
       similarityEncoder = similarityMatrix.encoder;
       similarityBasis = msg.similarityBasis;
       similarityInputD = msg.similarityInputD;
+      // Everything in this run was fitted with everything else, so a track that
+      // had been projected onto an older map is no longer an estimate. It stays
+      // marked as external, which is about where it came from rather than how
+      // it was placed.
+      for (const t of embeddingTracks) if (t.projected) t.projected = false;
       neighborIndex = new NeighborIndex(
         embeddingTracks,
         similarityVectors,
@@ -1213,13 +1282,24 @@ export type ProjectedTrack = {
   genre: string | null;
 };
 
+/** A projection, plus everything needed to attach it to the live embedding. */
+type ExternalPlacement = {
+  projection: ProjectedTrack;
+  x: number;
+  y: number;
+  /** the track's own coordinates in the playlist-free similarity space */
+  vector: Float32Array;
+  /** the cluster its neighbours voted for, defaulted rather than left null */
+  clusterId: number;
+};
+
 /**
  * Place a track the library has never seen onto the map that already exists,
  * without touching any state: encode it through the retained fit, project it
  * through the retained SVD basis, then take the UMAP-weighted mean of its
  * nearest neighbours' positions. Returns null until an embedding is ready.
  */
-function projectExternalTrack(input: ExternalTrackInput): ProjectedTrack | null {
+function placeExternalTrack(input: ExternalTrackInput): ExternalPlacement | null {
   if (!library || !similarityEncoder || !similarityVectors || !coords) return null;
   const track: Track = {
     pid: "",
@@ -1243,19 +1323,333 @@ function projectExternalTrack(input: ExternalTrackInput): ProjectedTrack | null 
   return {
     x: placement.x,
     y: placement.y,
-    neighbors: placement.neighbors.map(({ index, distance, weight }) => ({
-      pid: library!.tracks[index].pid,
-      name: library!.tracks[index].name,
-      distance,
-      weight,
-    })),
-    clusterId: transferred.clusterId,
-    clusterLabel:
-      transferred.clusterId === null
-        ? null
-        : clusterLabels.get(transferred.clusterId) ?? null,
-    genre: track.genre ? null : transferred.genre,
+    vector,
+    // Every neighbour it was placed from is in some cluster, so the vote only
+    // comes back empty on a map that has none at all.
+    clusterId: transferred.clusterId ?? 0,
+    projection: {
+      x: placement.x,
+      y: placement.y,
+      neighbors: placement.neighbors.map(({ index, distance, weight }) => ({
+        pid: library!.tracks[index].pid,
+        name: library!.tracks[index].name,
+        distance,
+        weight,
+      })),
+      clusterId: transferred.clusterId,
+      clusterLabel:
+        transferred.clusterId === null
+          ? null
+          : clusterLabels.get(transferred.clusterId) ?? null,
+      genre: track.genre ? null : transferred.genre,
+    },
   };
+}
+
+function projectExternalTrack(input: ExternalTrackInput): ProjectedTrack | null {
+  return placeExternalTrack(input)?.projection ?? null;
+}
+
+// ---------- tracks from outside the library ----------
+
+/**
+ * A track found in a catalogue and placed on the map by projection: a ghost
+ * until it is added, part of the library afterwards, and ringed either way.
+ *
+ * The whole feature turns on one rule: adding one of these never re-embeds.
+ * A UMAP layout is not stable under a changed corpus, so re-fitting to admit a
+ * single track would move every dot the user is currently looking at — the
+ * orientation they built by exploring is worth more than the marginal accuracy
+ * of including one more row in the fit. So the arrays are grown in step
+ * (src/embed/attach.ts) and `embeddingGeneration` is left alone, which is what
+ * every consumer keyed to a layout run reads.
+ */
+const EXTERNAL_COLLECTION_ID = "external-discoveries";
+const EXTERNAL_COLLECTION_LABEL = "Searches";
+
+/** Catalogue results offered at once — a screenful, not a catalogue browser. */
+const EXTERNAL_RESULT_LIMIT = 8;
+
+/**
+ * Why the dot is where it is. Estimated rather than measured, and said plainly:
+ * a record from a genre the crate does not hold lands beside the nearest thing
+ * it does hold, which is a statement about the library rather than the track.
+ */
+const ESTIMATED_NOTE =
+  "Estimated position — placed next to the closest tracks you own, not measured from this one.";
+
+type ExternalTrackRecord = {
+  track: Track;
+  /** what it was projected from, so a timbre arriving later can redo it */
+  input: ExternalTrackInput;
+  placement: ExternalPlacement;
+  /** true once it has been attached to the library */
+  added: boolean;
+};
+
+const externals = new Map<string, ExternalTrackRecord>();
+
+/** Only ever set by a placement that failed; cleared by the next query. */
+let externalNotice = "";
+
+function externalPid(deezerId: number): string {
+  return `ext:deezer:${deezerId}`;
+}
+
+/** Where a track is, whether it is in the layout or only projected onto it. */
+function trackPosition(pid: string): [number, number] | null {
+  const i = pidToIndex.get(pid);
+  if (i !== undefined && coords) return [coords[i * 2], coords[i * 2 + 1]];
+  const record = externals.get(pid);
+  return record && !record.added ? [record.placement.x, record.placement.y] : null;
+}
+
+function trackByPid(pid: string): Track | null {
+  const i = pidToIndex.get(pid);
+  if (i !== undefined && library) return library.tracks[i];
+  return externals.get(pid)?.track ?? null;
+}
+
+function syncGhosts(): void {
+  scatter?.setGhosts(
+    [...externals.values()]
+      .filter((record) => !record.added)
+      .map((record) => ({
+        track: record.track,
+        x: record.placement.x,
+        y: record.placement.y,
+      }))
+  );
+}
+
+/** The current embedding as the attach module wants it, or null. */
+function liveEmbedding(): Embedding | null {
+  if (!library || !coords || !clusters || !similarityVectors || similarityD === 0) {
+    return null;
+  }
+  return {
+    tracks: library.tracks,
+    coords,
+    clusters,
+    similarity: similarityVectors,
+    similarityD,
+  };
+}
+
+/**
+ * Take a grown or amended embedding without re-fitting anything. Deliberately
+ * silent about `embeddingGeneration`: it names the last *fit*, and nothing here
+ * is one. The neighbour index is rebuilt rather than mutated because it caches
+ * per query, and the camera is held because the user is looking at it.
+ */
+function adoptEmbedding(next: Embedding): void {
+  if (!library) return;
+  library = { ...library, tracks: next.tracks };
+  coords = next.coords;
+  clusters = next.clusters;
+  similarityVectors = next.similarity;
+  pidToIndex = new Map(next.tracks.map((t, i) => [t.pid, i]));
+  neighborIndex = new NeighborIndex(
+    next.tracks,
+    next.similarity,
+    similarityD,
+    embeddingGeneration
+  );
+  gaps = findGaps(next.coords, next.clusters, next.tracks.length);
+  scatter?.setData(
+    { tracks: next.tracks, coords: next.coords, clusters: next.clusters },
+    { keepView: true }
+  );
+  applyGapsVisibility();
+}
+
+/** The Searches row, created on the first add and counted after. */
+function withExternalCollection(lib: Library): CollectionMeta[] {
+  const cols = lib.collections ?? [];
+  const at = cols.findIndex((c) => c.id === EXTERNAL_COLLECTION_ID);
+  const meta: CollectionMeta = {
+    id: EXTERNAL_COLLECTION_ID,
+    label: EXTERNAL_COLLECTION_LABEL,
+    format: "external",
+    trackCount: lib.tracks.filter((t) => t.collection === EXTERNAL_COLLECTION_ID).length,
+    addedAt: at >= 0 ? cols[at].addedAt : new Date().toISOString(),
+  };
+  return at >= 0 ? cols.map((c, i) => (i === at ? meta : c)) : [...cols, meta];
+}
+
+/**
+ * Look a track up in a catalogue, place it, and hold it as a ghost. Reports
+ * whether it landed, so the caller knows whether to close the result list.
+ */
+async function placeExternalCandidate(candidate: ExternalCandidate): Promise<boolean> {
+  const pid = externalPid(candidate.id);
+  if (trackPosition(pid)) {
+    // Chosen twice, or added in an earlier session: go to the one that exists.
+    focusTrack(pid);
+    return true;
+  }
+  // Tempo, year and label are on the per-track and per-album endpoints rather
+  // than in a search result, and all three carry weight in the placement, so
+  // they are worth two more calls through the same limiter.
+  const facts = await deezerTrackFacts(
+    candidate.id,
+    candidate.albumId,
+    candidate.artist
+  ).catch(() => ({}) as Awaited<ReturnType<typeof deezerTrackFacts>>);
+
+  const input: ExternalTrackInput = {
+    name: candidate.title,
+    artist: candidate.artist,
+    durationMs: candidate.durationMs,
+    // Deezer reports 0 for a tempo it does not know, and deezerTrackFacts has
+    // already dropped those: a zero here would be a real claim about the record.
+    bpm: facts.bpm,
+    year: facts.year,
+    label: facts.label,
+  };
+  const placement = placeExternalTrack(input);
+  if (!placement) {
+    externalNotice = "The map is still building, so there is nowhere to place it yet.";
+    return false;
+  }
+
+  const track: Track = {
+    pid,
+    trackId: 0,
+    name: candidate.title,
+    artist: candidate.artist,
+    album: candidate.album,
+    durationMs: candidate.durationMs ?? 0,
+    playlists: [],
+    external: true,
+    projected: true,
+    deezerId: candidate.id,
+    ...(candidate.previewUrl || facts.previewUrl
+      ? { previewUrl: facts.previewUrl ?? candidate.previewUrl }
+      : {}),
+    ...(facts.bpm ? { bpm: facts.bpm, source: { bpm: "deezer" } } : {}),
+    ...(facts.year ? { year: facts.year } : {}),
+    ...(facts.label ? { label: facts.label } : {}),
+  };
+  // Deezer states no genre, so the one shown is carried over from the tracks it
+  // landed among — marked as such, since a stated genre is evidence and a
+  // transferred one is an inference.
+  if (placement.projection.genre) {
+    track.genre = placement.projection.genre;
+    track.source = { ...track.source, genre: "projected" };
+  }
+
+  externals.set(pid, { track, input, placement, added: false });
+  externalNotice = "";
+  syncGhosts();
+  scatter?.focusOn(placement.x, placement.y);
+  openTrackPopover(track);
+  // The preview is already in hand, and one decode is what turns an estimate
+  // made from metadata into one that has heard the record.
+  void analyzeExternalTrack(pid);
+  return true;
+}
+
+/**
+ * Add a ghost to the library, keeping the coordinate it was projected to.
+ *
+ * This is the invariant the whole feature rests on: no re-fit, no new
+ * embedding generation, and every existing dot left exactly where it was.
+ */
+async function addExternalTrack(pid: string): Promise<void> {
+  const record = externals.get(pid);
+  const embedding = liveEmbedding();
+  if (!record || record.added || !embedding || pidToIndex.has(pid) || !library) return;
+
+  record.track.collection = EXTERNAL_COLLECTION_ID;
+  const next = attachProjectedTrack(embedding, record.track, {
+    x: record.placement.x,
+    y: record.placement.y,
+    clusterId: record.placement.clusterId,
+    vector: record.placement.vector,
+  });
+  record.added = true;
+  adoptEmbedding(next);
+  library = { ...library, collections: withExternalCollection(library) };
+
+  scatter?.setCollections(library.collections ?? []);
+  syncGhosts();
+  renderCollections();
+  renderCoverage();
+  renderLegend();
+  applyHighlight();
+  if (popoverTrack?.pid === pid) renderTrackPopover();
+  await saveLibrary(library);
+}
+
+/**
+ * Hear the track, then place it again. Audio yields a timbre vector, which is a
+ * feature nothing knew about when the track was placed from its metadata — but
+ * it is one more row's worth of evidence, not grounds for re-laying out the
+ * library, so the ghost slides and the map holds still.
+ */
+async function analyzeExternalTrack(pid: string): Promise<void> {
+  const record = externals.get(pid);
+  if (!record || record.track.timbre) return;
+  if (!record.track.previewUrl && record.track.deezerId === undefined) return;
+  if (await analyzeTrack(record.track)) reprojectExternalTrack(record);
+}
+
+function reprojectExternalTrack(record: ExternalTrackRecord): void {
+  // Only a genuinely new measurement is worth moving a dot for; an analysis
+  // pass that re-reports the same timbre should leave it alone.
+  if (record.input.timbre === record.track.timbre) return;
+  const input: ExternalTrackInput = {
+    ...record.input,
+    timbre: record.track.timbre,
+    bpm: record.track.bpm ?? record.input.bpm,
+    key: record.track.key ?? record.input.key,
+  };
+  const placement = placeExternalTrack(input);
+  if (!placement) return;
+  record.input = input;
+  record.placement = placement;
+
+  const embedding = liveEmbedding();
+  if (record.added && embedding) {
+    const next = reprojectAttachedTrack(embedding, record.track.pid, {
+      x: placement.x,
+      y: placement.y,
+      clusterId: placement.clusterId,
+      vector: placement.vector,
+    });
+    if (next) adoptEmbedding(next);
+  }
+  // The selection marker and the popover are both anchored to a position that
+  // just changed, and neither of them is redrawn by the move itself.
+  syncGhosts();
+  if (popoverTrack?.pid === record.track.pid) renderTrackPopover();
+  applyHighlight();
+}
+
+/** An analysis pass touched a track; if it was a projected one, re-place it. */
+function noteExternalAnalysis(track: Track): void {
+  const record = externals.get(track.pid);
+  if (record) reprojectExternalTrack(record);
+}
+
+/**
+ * A fresh embedding includes every track that was in it, projected ones
+ * included, so their positions are fitted now rather than estimated. The ring
+ * stays — that says the track came from outside, which does not change — but
+ * the anchors that explained an estimate no longer explain anything.
+ */
+function rebasePlacedTracks(): void {
+  for (const [pid, record] of externals) {
+    if (record.added) {
+      externals.delete(pid);
+      continue;
+    }
+    const placement = placeExternalTrack(record.input);
+    if (placement) record.placement = placement;
+    else externals.delete(pid);
+  }
+  syncGhosts();
 }
 
 function onEmbeddingReady(): void {
@@ -1284,6 +1678,9 @@ function onEmbeddingReady(): void {
   scatter.setClusterLabels(clusterLabels);
   scatter.setCollections(library.collections ?? []);
   scatter.setData({ tracks: library.tracks, coords, clusters });
+  // A ghost's coordinate belongs to the layout it was projected onto, which
+  // this one has just replaced.
+  rebasePlacedTracks();
   applyGapsVisibility();
   applyHighlight();
   renderLegend();
@@ -1333,7 +1730,45 @@ function onTrackEnriched(t: Track): void {
 
 const gsbInput = $<HTMLInputElement>("gsb-key");
 gsbInput.value = getSongBpmApiKey() ?? "";
-gsbInput.addEventListener("change", () => setSongBpmApiKey(gsbInput.value));
+
+/**
+ * The key is optional, and saving it has no visible consequence: it promotes
+ * GetSongBPM to the first lookup tier, which only shows itself during a run.
+ * Without a word from the field, typing a key and typing nothing look the same.
+ * The note clears itself after a moment — a confirmation that stays is read as
+ * a label, and would go on claiming a save long after the fact.
+ */
+const GSB_NOTICE_MS = 2400;
+let gsbNotice: number | undefined;
+let gsbSavedKey = getSongBpmApiKey() ?? "";
+
+function noteGsbKey(text: string): void {
+  const el = $("gsb-key-status");
+  el.textContent = text;
+  if (gsbNotice !== undefined) clearTimeout(gsbNotice);
+  gsbNotice = window.setTimeout(() => {
+    el.textContent = "";
+    gsbNotice = undefined;
+  }, GSB_NOTICE_MS);
+}
+
+/**
+ * `explicit` is Enter, which is a request for an answer and always gets one.
+ * The blur-driven `change` event stays quiet when the value is what was already
+ * saved, so committing the field after pressing Enter does not say it twice.
+ */
+function saveGsbKey(explicit: boolean): void {
+  const next = gsbInput.value.trim();
+  if (!explicit && next === gsbSavedKey) return;
+  const outcome = saveSongBpmApiKey(next);
+  gsbSavedKey = next;
+  noteGsbKey(outcome === "saved" ? "Key saved" : "Key cleared");
+}
+
+gsbInput.addEventListener("change", () => saveGsbKey(false));
+gsbInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") saveGsbKey(true);
+});
 
 const gsbProxyInput = $<HTMLInputElement>("gsb-proxy");
 gsbProxyInput.value = getSongBpmProxy() ?? "";
@@ -1371,19 +1806,9 @@ function renderAnalysisProgress(): void {
 
 function renderAnalysisIdle(): void {
   if (!library) return;
-  const pending = analysisTargets(
-    library.tracks,
-    scatter?.visiblePids() ?? []
-  ).length;
-  const online = analysisLookupTargets(library.tracks).length;
-  const parts: string[] = [];
-  if (online > 0) {
-    parts.push(`${online.toLocaleString()} need online analysis`);
-  }
-  if (pending > 0) {
-    parts.push(`${pending.toLocaleString()} in view need audio analysis`);
-  }
-  $("dsp-status").textContent = parts.join(" · ") || "nothing needs analysis";
+  $("dsp-status").textContent = describeAnalysisNeeded(
+    analysisNeededCount(library.tracks, scatter?.visiblePids() ?? [])
+  );
 }
 
 /**
@@ -1485,6 +1910,7 @@ $("dsp-start").addEventListener("click", async () => {
       if (run !== analysisRun) return;
       if (changed) {
         scatter?.update();
+        noteExternalAnalysis(target.track);
         if (popoverTrack?.pid === target.track.pid) renderTrackPopover();
       }
       if (target.needsSound && target.track.timbre) soundResolved++;
@@ -1521,6 +1947,7 @@ async function analyzeOne(t: Track): Promise<void> {
   if (await analyzeTrack(t)) {
     scatter?.update();
     renderCoverage();
+    noteExternalAnalysis(t);
     if (popoverTrack?.pid === t.pid) renderTrackPopover();
     if (library) void saveLibrary(library);
   }
@@ -1541,7 +1968,6 @@ function collectionFormatLabel(format: CollectionFormat): string {
 function renderCollections(): void {
   const list = $("collection-list");
   const cols = library?.collections ?? [];
-  $("import-mode").hidden = library === null;
   $("import-undo").hidden = previousLibrary === null;
   if (cols.length === 0) {
     list.innerHTML = "";
@@ -1618,7 +2044,7 @@ function renderCoverage(): void {
     );
   });
   $("coverage").innerHTML = parts.join("");
-  $("enrich-scope").textContent = describeOutstanding(rows);
+  $("enrich-scope").textContent = "";
   syncSoundInfluence(rows);
   syncLabelInfluence(rows);
   syncPlaylistInfluence(rows);
@@ -1626,10 +2052,14 @@ function renderCoverage(): void {
   const stats = getSourceStats();
   $("source-stats").innerHTML = Object.entries(stats)
     .map(
+      // `skipped` distinguishes a tier that had nothing left to answer from one
+      // that has stopped answering; under per-field routing both read as 0 calls.
       ([name, s]) =>
-        `<div>${name}: ${s.calls} calls · ${s.hits} hit · ${s.misses} miss · ${s.errors} err</div>`
+        `<div>${name}: ${s.calls} calls · ${s.hits} hit · ${s.misses} miss · ` +
+        `${s.errors} err · ${s.skipped} skipped</div>`
     )
     .join("");
+  if (!analysisRunning) renderAnalysisIdle();
 }
 
 function syncSoundInfluence(rows: CollectionCoverage[]): void {
@@ -1671,7 +2101,18 @@ $("retry-misses").addEventListener("click", async () => {
 const tooltip = $("tooltip");
 
 function currentNeighbors(track: Track): Neighbor[] {
-  return neighborIndex?.nearest(track.pid, neighborCollection, 5) ?? [];
+  if (!neighborIndex) return [];
+  // A ghost is not a row in the index until it is added, but it already has a
+  // vector in the same space, so the ordinary five-neighbour query still works.
+  const record = externals.get(track.pid);
+  if (record && !pidToIndex.has(track.pid)) {
+    return neighborIndex.nearestToVector(
+      record.placement.vector,
+      neighborCollection,
+      5
+    );
+  }
+  return neighborIndex.nearest(track.pid, neighborCollection, 5);
 }
 
 function neighborCollectionLabel(): string {
@@ -1773,9 +2214,9 @@ function anchorPopover(el: HTMLElement, worldX: number, worldY: number): void {
 }
 
 function repositionPopovers(): void {
-  if (popoverTrack && coords) {
-    const i = pidToIndex.get(popoverTrack.pid);
-    if (i !== undefined) anchorPopover($("track-popover"), coords[i * 2], coords[i * 2 + 1]);
+  if (popoverTrack) {
+    const at = trackPosition(popoverTrack.pid);
+    if (at) anchorPopover($("track-popover"), at[0], at[1]);
   }
   if (popoverGap) anchorPopover($("gap-popover"), popoverGap.x, popoverGap.y);
   repositionInfoPopups();
@@ -1793,12 +2234,30 @@ function openTrackPopover(track: Track): void {
   tooltip.hidden = true;
   closeGapPopover();
   renderTrackPopover();
+  applyHighlight();
 }
 
 function closeTrackPopover(): void {
   popoverTrack = null;
   scatter?.setSelectedTrack(null);
   $("track-popover").hidden = true;
+  applyHighlight();
+}
+
+/**
+ * The close button on a ghost that was never added means the user is done
+ * looking at it: take the dot off the map rather than leaving a mark they
+ * chose not to keep.
+ */
+function dismissTrackPopover(): void {
+  const pid = popoverTrack?.pid;
+  const record = pid ? externals.get(pid) : undefined;
+  const drop = Boolean(record && !record.added);
+  closeTrackPopover();
+  if (!drop || !pid) return;
+  externals.delete(pid);
+  syncGhosts();
+  applyHighlight();
 }
 
 function fmtDuration(ms: number): string {
@@ -1864,6 +2323,8 @@ function renderTrackPopover(): void {
   const el = $("track-popover");
   el.hidden = false;
   el.dataset.trackPid = t.pid;
+  const record = externals.get(t.pid);
+  const inLibrary = pidToIndex.has(t.pid);
 
   const hasFile = localByPid.has(t.pid);
   const sharedName = localResolution?.ambiguous.get(t.pid)?.length ?? 0;
@@ -1897,7 +2358,14 @@ function renderTrackPopover(): void {
     <h3>${esc(t.name)}</h3>
     <div class="sub">${esc(t.artist ?? "Unknown artist")}${t.album ? " — " + esc(t.album) : ""}</div>
     <div>
-      ${t.genre ? `<span class="badge">${esc(t.genre)}</span>` : ""}
+      ${t.external ? `<span class="badge external">outside your library</span>` : ""}
+      ${
+        t.genre
+          ? `<span class="badge">${esc(t.genre)}${
+              t.source?.genre === "projected" ? " (from its neighbours)" : ""
+            }</span>`
+          : ""
+      }
       ${t.label ? `<span class="badge">Label: ${esc(t.label)}</span>` : ""}
       ${t.year ? `<span class="badge">${t.year}</span>` : ""}
       ${t.durationMs ? `<span class="badge">${fmtDuration(t.durationMs)}</span>` : ""}
@@ -1905,20 +2373,38 @@ function renderTrackPopover(): void {
       ${hasFile ? `<span class="badge">local file</span>` : ""}
       ${sharedName > 1 ? `<span class="badge warn" title="Left unmatched rather than guessed">${sharedName} files share this name</span>` : ""}
     </div>
+    ${t.projected ? `<div class="small muted ghost-note">${esc(ESTIMATED_NOTE)}</div>` : ""}
     <hr />
-    <div class="row"><span>BPM</span><input id="ov-bpm" type="number" step="0.1" value="${t.bpm ? Math.round(t.bpm * 10) / 10 : ""}" /></div>
-    <div class="row"><span>Key</span><input id="ov-key" type="text" placeholder="8A / Am" value="${t.key ?? ""}" /></div>
+    ${
+      inLibrary
+        ? `<div class="row"><span>BPM</span><input id="ov-bpm" type="number" step="0.1" value="${t.bpm ? Math.round(t.bpm * 10) / 10 : ""}" /></div>
+           <div class="row"><span>Key</span><input id="ov-key" type="text" placeholder="8A / Am" value="${t.key ?? ""}" /></div>`
+        : `<div class="small">
+             <span class="badge">${t.bpm ? `${Math.round(t.bpm)} BPM` : "BPM unknown"}</span>
+             <span class="badge">${t.key ? camelotDisplay(t.key) : "key unknown"}</span>
+           </div>`
+    }
     <div class="small">${derived("bpm")}${derived("key")}</div>
     <div class="actions">
-      <button id="ov-save" class="primary">Save edits</button>
+      ${inLibrary ? `<button id="ov-save" class="primary">Save edits</button>` : ""}
+      ${
+        record && !record.added
+          ? `<button id="add-external" class="primary">Add to Searches</button>`
+          : ""
+      }
       <button id="add-to-set">Add to set</button>
       <button id="play-audio" title="${esc(audio.hint)}">${audio.label}</button>
     </div>
+    ${
+      record?.added
+        ? `<div class="small muted">Kept in ${esc(EXTERNAL_COLLECTION_LABEL)}.</div>`
+        : ""
+    }
     <div id="playback-note" class="small muted"></div>
     ${renderNeighborSection(t)}
   `;
 
-  el.querySelector<HTMLButtonElement>(".close")!.addEventListener("click", closeTrackPopover);
+  el.querySelector<HTMLButtonElement>(".close")!.addEventListener("click", dismissTrackPopover);
   el
     .querySelector<HTMLSelectElement>("#neighbor-collection")
     ?.addEventListener("change", (event) => {
@@ -1929,7 +2415,13 @@ function renderTrackPopover(): void {
     button.addEventListener("click", () => focusTrack(button.dataset.neighborPid!));
   });
 
-  $("ov-save").addEventListener("click", async () => {
+  el.querySelector("#add-external")?.addEventListener("click", () => {
+    void addExternalTrack(t.pid);
+  });
+
+  // Manual overrides are keyed on pid and applied at import, so they are only
+  // offered for a track the library actually holds.
+  el.querySelector("#ov-save")?.addEventListener("click", async () => {
     const bpmVal = parseFloat($<HTMLInputElement>("ov-bpm").value);
     const keyRaw = $<HTMLInputElement>("ov-key").value.trim();
     const keyVal = keyRaw ? toCamelot(keyRaw) : null;
@@ -1969,8 +2461,8 @@ function renderTrackPopover(): void {
 
   renderPlayback();
 
-  const i = pidToIndex.get(t.pid);
-  if (i !== undefined && coords) anchorPopover(el, coords[i * 2], coords[i * 2 + 1]);
+  const at = trackPosition(t.pid);
+  if (at) anchorPopover(el, at[0], at[1]);
 }
 
 // ---------- gaps overlay (§7.3) ----------
@@ -2539,11 +3031,27 @@ function playlistHighlight(): HighlightRequest | null {
 function applyHighlight(): void {
   const active = resolveHighlight([
     searchHighlight(),
+    anchorHighlight(),
     suggestionHighlight(),
     playlistHighlight(),
   ]);
   scatter?.setHighlight(active?.pids ?? [], active !== null);
   $("highlight-status").textContent = active?.note ?? "";
+}
+
+/** The library tracks that pulled a projected one onto the map. */
+function anchorHighlight(): HighlightRequest | null {
+  if (!popoverTrack) return null;
+  const record = externals.get(popoverTrack.pid);
+  if (!record || record.added) return null;
+  const pids = currentNeighbors(popoverTrack).map((neighbor) => neighbor.track.pid);
+  if (pids.length === 0) return null;
+  return {
+    source: "anchors",
+    label: `${counted(pids.length, "similar track")}`,
+    name: "the placed track",
+    pids,
+  };
 }
 
 // ---------- search ----------
@@ -2556,6 +3064,8 @@ let searchHits: SearchResults = { matches: [], shown: [] };
 let searchTimer: number | undefined;
 /** A chosen result closes the menu without throwing away the standing search. */
 let searchResultsDismissed = false;
+/** Catalogue search is opt-in and survives a re-render of the same query. */
+let externalSearch: ExternalSearchState = EXTERNAL_SEARCH_OFF;
 
 searchInput.addEventListener("input", () => {
   // A keystroke rescans the library and rewrites the map's highlight, so it
@@ -2599,8 +3109,19 @@ searchResults.addEventListener("focusout", (event) => {
   if (!searchHit(event.relatedTarget)) scatter?.setExternalHover(null);
 });
 searchResults.addEventListener("click", (event) => {
+  const target = event.target;
+  if (target instanceof Element && target.closest("[data-external-search]")) {
+    void runExternalSearch();
+    return;
+  }
   const hit = searchHit(event.target);
-  const pid = hit?.dataset.pid;
+  if (!hit) return;
+  const external = hit.dataset.externalIndex;
+  if (external !== undefined) {
+    void chooseExternal(Number(external));
+    return;
+  }
+  const pid = hit.dataset.pid;
   if (!pid) return;
   focusTrack(pid);
   dismissSearchResults();
@@ -2613,6 +3134,13 @@ function runSearch(): void {
     library && query
       ? searchTracks(library.tracks, query, SEARCH_LIST_LIMIT)
       : { matches: [], shown: [] };
+  externalSearch = query
+    ? nextExternalSearch(externalSearch, {
+        kind: "local",
+        query,
+        matches: searchHits.matches.length,
+      })
+    : nextExternalSearch(externalSearch, { kind: "cleared" });
   renderSearchResults(query);
   applyHighlight();
 }
@@ -2621,11 +3149,69 @@ function clearSearch(): void {
   searchResultsDismissed = nextSearchMenuDismissed(searchResultsDismissed, "cleared");
   scatter?.setExternalHover(null);
   if (!searchInput.value) {
+    externalSearch = nextExternalSearch(externalSearch, { kind: "cleared" });
     renderSearchResults("");
     return;
   }
   searchInput.value = "";
   runSearch();
+}
+
+/**
+ * Ask Deezer for the current query. Opt-in by design: it runs from the button
+ * in the result list, never from typing, so no keystroke reaches the network.
+ */
+async function runExternalSearch(): Promise<void> {
+  const query = searchInput.value.trim();
+  if (!query) return;
+  externalSearch = nextExternalSearch(externalSearch, { kind: "requested", query });
+  renderSearchResults(query);
+  try {
+    const hits = await searchDeezerTracks(query, EXTERNAL_RESULT_LIMIT);
+    const candidates = markLocalDuplicates(
+      hits.map((hit) => ({
+        id: hit.id,
+        title: hit.title,
+        artist: hit.artist,
+        album: hit.album,
+        albumId: hit.albumId,
+        durationMs: hit.durationMs,
+        previewUrl: hit.previewUrl,
+      })),
+      localTitleIndex(library?.tracks ?? [])
+    );
+    externalSearch = nextExternalSearch(externalSearch, {
+      kind: "found",
+      query,
+      candidates,
+    });
+  } catch (err) {
+    externalSearch = nextExternalSearch(externalSearch, {
+      kind: "failed",
+      query,
+      reason: err instanceof Error ? err.message : "the request failed",
+    });
+  }
+  renderSearchResults(searchInput.value.trim());
+}
+
+/**
+ * A result that turned out to be something the user already owns opens their
+ * own copy: a second dot for the same track would be a lie about the library.
+ */
+async function chooseExternal(index: number): Promise<void> {
+  if (externalSearch.kind !== "results") return;
+  const candidate = externalSearch.candidates[index];
+  if (!candidate) return;
+  if (candidate.localPid) {
+    focusTrack(candidate.localPid);
+    dismissSearchResults();
+    return;
+  }
+  dismissSearchResults();
+  if (!(await placeExternalCandidate(candidate))) {
+    renderSearchResults(searchInput.value.trim());
+  }
 }
 
 function dismissSearchResults(): void {
@@ -2643,26 +3229,64 @@ function renderSearchResults(query: string): void {
     el.innerHTML = "";
     return;
   }
-  if (!library || searchHits.matches.length === 0) {
-    el.innerHTML = `<div class="muted small">Nothing matches "${esc(query)}".</div>`;
-    return;
+
+  const parts: string[] = [];
+  if (externalNotice) {
+    parts.push(`<div class="muted small">${esc(externalNotice)}</div>`);
   }
-  const tracks = library.tracks;
-  const more = searchHits.matches.length - searchHits.shown.length;
-  el.innerHTML =
-    searchHits.shown
-      .map((i) => {
+
+  if (library && searchHits.matches.length > 0) {
+    const tracks = library.tracks;
+    const more = searchHits.matches.length - searchHits.shown.length;
+    parts.push(
+      ...searchHits.shown.map((i) => {
         const t = tracks[i];
         return `<button type="button" class="search-hit" data-pid="${esc(t.pid)}">
           <span class="hit-name">${esc(t.name)}</span>
           <span class="hit-artist">${esc(t.artist ?? "Unknown artist")}</span>
         </button>`;
       })
-      .join("") +
-    (more > 0
-      ? `<div class="muted small more">${counted(more, "more match", "more matches")}, highlighted on the map but not listed.</div>`
-      : "");
+    );
+    if (more > 0) {
+      parts.push(
+        `<div class="muted small more">${counted(more, "more match", "more matches")}, highlighted on the map but not listed.</div>`
+      );
+    }
+  } else if (!library || searchHits.matches.length === 0) {
+    parts.push(`<div class="muted small">Nothing matches "${esc(query)}".</div>`);
+  }
 
+  if (library) {
+    const note = externalSearchNote(externalSearch);
+    if (note) parts.push(`<div class="muted small">${esc(note)}</div>`);
+    if (externalSearch.kind === "offer" || externalSearch.kind === "failed") {
+      parts.push(
+        `<button type="button" class="search-hit" data-external-search="1">
+          <span class="hit-name">Search Deezer</span>
+          <span class="hit-artist">Look outside your library</span>
+        </button>`
+      );
+    }
+    if (externalSearch.kind === "results") {
+      parts.push(
+        ...externalSearch.candidates.map((candidate, index) => {
+          const already = candidate.localPid
+            ? " · already in your library"
+            : "";
+          return `<button type="button" class="search-hit" data-external-index="${index}"${
+            candidate.localPid ? ` data-pid="${esc(candidate.localPid)}"` : ""
+          }>
+            <span class="hit-name">${esc(candidate.title)}</span>
+            <span class="hit-artist">${esc(candidate.artist ?? "Unknown artist")}${
+              candidate.album ? ` — ${esc(candidate.album)}` : ""
+            }${already}</span>
+          </button>`;
+        })
+      );
+    }
+  }
+
+  el.innerHTML = parts.join("");
   el.querySelectorAll<HTMLButtonElement>(".search-hit").forEach((btn) => {
     btn.setAttribute(
       "aria-label",
@@ -2673,11 +3297,11 @@ function renderSearchResults(query: string): void {
 
 /** Go to a track from the result list: camera onto it, popover pinned to it. */
 function focusTrack(pid: string): void {
-  if (!library || !coords) return;
-  const i = pidToIndex.get(pid);
-  if (i === undefined) return;
-  scatter?.focusOn(coords[i * 2], coords[i * 2 + 1]);
-  openTrackPopover(library.tracks[i]);
+  const at = trackPosition(pid);
+  const track = trackByPid(pid);
+  if (!at || !track) return;
+  scatter?.focusOn(at[0], at[1]);
+  openTrackPopover(track);
 }
 
 // ---------- tabs ----------
@@ -2766,12 +3390,6 @@ Object.assign(window, {
   __onkio: {
     importFile,
     importFiles,
-    setImportMode: (mode: "add" | "replace") => {
-      const el = document.querySelector<HTMLInputElement>(
-        `input[name="import-mode"][value="${mode}"]`
-      );
-      if (el) el.checked = true;
-    },
     setColorMode,
     focusTrack,
     projectTrack: projectExternalTrack,
@@ -2822,6 +3440,7 @@ Object.assign(window, {
         format: c.format,
         tracks: c.trackCount,
       })),
+      staged: stagedFiles.map((file) => file.name),
       coverage: library ? collectionCoverage(library, new Set(localByPid.keys())) : [],
       localFolder: musicFolder?.name ?? null,
       localState: localState.kind,

@@ -5,6 +5,7 @@ import { parseCamelot } from "../music/camelot";
 import {
   CLUSTER_COLORS,
   DEFAULT_BPM_SCALE,
+  EXTERNAL_COLOR,
   GAP_COLOR,
   LASSO_COLOR,
   NO_DATA,
@@ -58,6 +59,17 @@ export type GapMarker = {
   y: number;
   a: [number, number];
   b: [number, number];
+};
+
+/**
+ * A track found outside the library and placed by projection, which has not
+ * been added to it. It carries its own position because it is in no track
+ * array: `coords` belongs to the embedding run, and this was never in one.
+ */
+export type GhostPoint = {
+  track: Track;
+  x: number;
+  y: number;
 };
 
 export type LegendEntry = {
@@ -156,10 +168,21 @@ export class Scatter {
   private fitted: ViewState = this.viewState;
   /** widest side of the laid-out data, in world units — framing is relative to it */
   private span = 1;
-  /** the laid-out data's extent in world units, as `fitView` measured it */
+  /** the laid-out data's extent in world units, as `measureData` found it */
   private dataBounds: Bounds | null = null;
-  /** the dot under the pointer, drawn and animated on its own (see hoverLayers) */
-  private hovered: { pid: string; index: number } | null = null;
+  /**
+   * The dot under the pointer, drawn and animated on its own (see hoverLayers).
+   * `index` is the row in the laid-out data, or -1 for a ghost, which has no
+   * row — hence the position being carried here rather than looked up.
+   */
+  private hovered: {
+    pid: string;
+    index: number;
+    track: Track;
+    at: [number, number];
+  } | null = null;
+  /** external tracks placed on the map but not added to the library */
+  private ghosts: GhostPoint[] = [];
   /** the track whose detail popover is open */
   private selectedPid: string | null = null;
   private pulseHandle: number | null = null;
@@ -216,13 +239,14 @@ export class Scatter {
         // Mid-gesture the pointer is drawing, not pointing: a hover would light
         // dots up and, in Browsing mode, start playing whatever it crossed.
         if (this.lassoMode) {
-          this.setHovered(null, -1);
+          this.clearHovered();
           this.cb.onHover?.(null, info.x, info.y);
           return;
         }
-        const track = info.layer?.id === "tracks" ? (info.object as Track) : null;
-        this.setHovered(track, track ? info.index : -1);
-        this.cb.onHover?.(track ?? null, info.x, info.y);
+        const picked = this.pickedTrack(info);
+        if (picked) this.setHovered(picked.track, picked.index, picked.at);
+        else this.clearHovered();
+        this.cb.onHover?.(picked?.track ?? null, info.x, info.y);
       },
       onClick: (info: PickingInfo) => {
         if (this.lassoMode) return;
@@ -230,8 +254,7 @@ export class Scatter {
           this.cb.onGapClick?.((info.object as GapMarker).index);
           return;
         }
-        const track = info.layer?.id === "tracks" ? (info.object as Track) : null;
-        this.cb.onClick?.(track ?? null, info.x, info.y);
+        this.cb.onClick?.(this.pickedTrack(info)?.track ?? null, info.x, info.y);
       },
     });
 
@@ -354,7 +377,13 @@ export class Scatter {
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
     const picked = this.deck.pickMultipleObjects({ x, y, radius: 6, depth: 4 });
-    if (picked.some((info) => info.layer?.id === "tracks" || info.layer?.id === "gaps")) return;
+    if (
+      picked.some((info) =>
+        ["tracks", "gaps", "ghosts"].includes(info.layer?.id ?? "")
+      )
+    ) {
+      return;
+    }
     this.cb.onClick?.(null, x, y);
   };
 
@@ -400,7 +429,13 @@ export class Scatter {
     ];
   }
 
-  setData(state: ScatterState): void {
+  /**
+   * `keepView` is for data that grew rather than data that was replaced: a
+   * track projected onto the existing map has to be able to join it without
+   * the camera jumping back to the whole-library framing, which would undo the
+   * very act of going to look at it.
+   */
+  setData(state: ScatterState, { keepView = false }: { keepView?: boolean } = {}): void {
     this.state = state;
     // Row indices and world positions belong to the layout that just went away.
     this.hovered = null;
@@ -413,7 +448,14 @@ export class Scatter {
     this.decades = [...decades].sort((a, b) => a - b);
     this.decadeIndex = new Map(this.decades.map((d, i) => [d, i]));
     this.bpmScaleFor = 0;
-    this.fitView();
+    this.measureData();
+    if (!keepView) this.setViewState(this.fitted);
+    this.update();
+  }
+
+  /** Pending external tracks, drawn on the map without being part of it. */
+  setGhosts(ghosts: GhostPoint[]): void {
+    this.ghosts = ghosts;
     this.update();
   }
 
@@ -473,13 +515,50 @@ export class Scatter {
    * Browsing-mode audio.
    */
   setExternalHover(pid: string | null): void {
-    const state = this.state;
-    if (!state || pid === null) {
-      this.setHovered(null, -1);
+    if (pid === null) {
+      this.clearHovered();
       return;
     }
-    const index = state.tracks.findIndex((track) => track.pid === pid);
-    this.setHovered(index < 0 ? null : state.tracks[index], index);
+    const found = this.locate(pid);
+    if (found) this.setHovered(found.track, found.index, found.at);
+    else this.clearHovered();
+  }
+
+  /** Where a track is, whether it is in the layout or only projected onto it. */
+  private locate(
+    pid: string
+  ): { track: Track; index: number; at: [number, number] } | null {
+    const state = this.state;
+    const index = state ? state.tracks.findIndex((track) => track.pid === pid) : -1;
+    if (state && index >= 0) {
+      return {
+        track: state.tracks[index],
+        index,
+        at: [state.coords[index * 2], state.coords[index * 2 + 1]],
+      };
+    }
+    const ghost = this.ghosts.find((candidate) => candidate.track.pid === pid);
+    return ghost ? { track: ghost.track, index: -1, at: [ghost.x, ghost.y] } : null;
+  }
+
+  /** What a deck picking result points at, in this module's terms. */
+  private pickedTrack(
+    info: PickingInfo
+  ): { track: Track; index: number; at: [number, number] } | null {
+    const state = this.state;
+    if (info.layer?.id === "tracks" && info.object && state) {
+      const index = info.index;
+      return {
+        track: info.object as Track,
+        index,
+        at: [state.coords[index * 2], state.coords[index * 2 + 1]],
+      };
+    }
+    if (info.layer?.id === "ghosts" && info.object) {
+      const ghost = info.object as GhostPoint;
+      return { track: ghost.track, index: -1, at: [ghost.x, ghost.y] };
+    }
+    return null;
   }
 
   /** Exposed for lightweight browser verification of the visual hover state. */
@@ -608,7 +687,8 @@ export class Scatter {
     return out;
   }
 
-  private fitView(): void {
+  /** Where the data is and how big it is, which framing is derived from. */
+  private measureData(): void {
     if (!this.state) return;
     const { coords, tracks } = this.state;
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -628,7 +708,6 @@ export class Scatter {
       target: [cx, cy, 0],
       zoom: Math.log2(600 / span),
     };
-    this.setViewState(this.fitted);
   }
 
   private color(track: Track, i: number): [number, number, number, number] {
@@ -915,8 +994,81 @@ export class Scatter {
       })
     );
 
+    layers.push(...this.externalLayers());
+
     this.baseLayers = layers;
     this.draw();
+  }
+
+  /**
+   * Tracks that came from outside the library, ringed rather than filled.
+   *
+   * Two sets, drawn the same way on purpose. One is already in the library and
+   * so is already a dot in the layer above; the ring is all it needs. The other
+   * is a ghost, which is in no track array at all, so it needs the dot too.
+   *
+   * The ring never comes off. A projected position is an estimate made from the
+   * crate the user owns: a record from a genre their library does not hold lands
+   * beside the nearest thing it does hold rather than out in open space, and
+   * analyzing its audio sharpens that estimate without turning it into a
+   * measurement.
+   */
+  private externalLayers(): Layer[] {
+    const s = this.state;
+    const ringed: { pid: string; at: [number, number] }[] = [];
+    if (s) {
+      for (let i = 0; i < s.tracks.length; i++) {
+        if (!s.tracks[i].external) continue;
+        ringed.push({
+          pid: s.tracks[i].pid,
+          at: [s.coords[i * 2], s.coords[i * 2 + 1]],
+        });
+      }
+    }
+    for (const ghost of this.ghosts) {
+      ringed.push({ pid: ghost.track.pid, at: [ghost.x, ghost.y] });
+    }
+    if (ringed.length === 0) return [];
+
+    const [r, g, b] = EXTERNAL_COLOR[this.theme];
+    const layers: Layer[] = [
+      new ScatterplotLayer<(typeof ringed)[number]>({
+        id: "external-rings",
+        data: ringed,
+        getPosition: (point) => point.at,
+        getRadius: 5,
+        radiusUnits: "pixels",
+        stroked: true,
+        filled: false,
+        getLineColor: [r, g, b, 230],
+        getLineWidth: 1.4,
+        lineWidthUnits: "pixels",
+        pickable: false,
+        updateTriggers: { getPosition: ringed.length, getLineColor: [this.theme] },
+      }),
+    ];
+
+    if (this.ghosts.length > 0) {
+      layers.push(
+        new ScatterplotLayer<GhostPoint>({
+          id: "ghosts",
+          data: this.ghosts,
+          getPosition: (ghost: GhostPoint) => [ghost.x, ghost.y],
+          getRadius: 2.2,
+          radiusUnits: "pixels",
+          radiusScale: 2.4,
+          stroked: false,
+          filled: true,
+          getFillColor: [r, g, b, 235],
+          pickable: true,
+          updateTriggers: {
+            getPosition: this.ghosts.map((ghost) => `${ghost.x},${ghost.y}`).join("|"),
+            getFillColor: [this.theme],
+          },
+        })
+      );
+    }
+    return layers;
   }
 
   private draw(): void {
@@ -936,11 +1088,12 @@ export class Scatter {
    * layout changes without making any part of the marker pickable.
    */
   private selectedLayers(): Layer[] {
-    const state = this.state;
-    if (!state || !this.selectedPid) return [];
-    const index = state.tracks.findIndex((track) => track.pid === this.selectedPid);
-    if (index < 0) return [];
-    const at: [number, number] = [state.coords[index * 2], state.coords[index * 2 + 1]];
+    if (!this.selectedPid) return [];
+    // Ghosts included: "which dot am I looking at" is a question a projected
+    // track raises more sharply than any other, not less.
+    const found = this.locate(this.selectedPid);
+    if (!found) return [];
+    const at = found.at;
     const [r, g, b] = LASSO_COLOR[this.theme];
     const tickData = [
       { at, text: "—", offset: [-10, 0] as [number, number] },
@@ -991,12 +1144,17 @@ export class Scatter {
    * changes: restarting on each move would hold the pulse at its first frame
    * and it would never breathe.
    */
-  private setHovered(track: Track | null, index: number): void {
-    const pid = track?.pid ?? null;
-    if (pid === (this.hovered?.pid ?? null)) return;
-    this.hovered = pid === null ? null : { pid, index };
-    if (this.hovered) this.startPulse();
-    else this.stopPulse();
+  private setHovered(track: Track, index: number, at: [number, number]): void {
+    if (track.pid === this.hovered?.pid) return;
+    this.hovered = { pid: track.pid, index, track, at };
+    this.startPulse();
+    this.draw();
+  }
+
+  private clearHovered(): void {
+    if (this.hovered === null) return;
+    this.hovered = null;
+    this.stopPulse();
     this.draw();
   }
 
@@ -1025,9 +1183,12 @@ export class Scatter {
   private hoverLayers(): Layer[] {
     const h = this.hovered;
     const s = this.state;
-    if (!h || !s || h.index < 0 || h.index >= s.tracks.length) return [];
-    const at: [number, number] = [s.coords[h.index * 2], s.coords[h.index * 2 + 1]];
-    const [r, g, b] = this.color(s.tracks[h.index], h.index);
+    if (!h || !s || h.index >= s.tracks.length) return [];
+    const at = h.at;
+    // A ghost has no row, so no colour mode applies to it; it keeps the same
+    // violet it is ringed in, which is the point of the ring.
+    const [r, g, b] =
+      h.index < 0 ? EXTERNAL_COLOR[this.theme] : this.color(h.track, h.index);
     // Held at the top of the swell when motion is unwelcome: bigger, still.
     const swell = this.reducedMotion?.matches
       ? 1

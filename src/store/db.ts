@@ -1,5 +1,6 @@
 import type { FeatureLookup, Library } from "../types";
 import type { MusicFolder } from "../local/folder";
+import type { Field } from "../enrich/fields";
 
 /**
  * IndexedDB layer (§3.1). Lookup cache is keyed on normalized artist|title so
@@ -33,6 +34,14 @@ export type CachedLookup = {
   ts: number;
   hit: boolean;
   data?: FeatureLookup;
+  /**
+   * Fields some source was actually asked about. Routing is per field, so a
+   * record can be a hit for BPM while nothing has ever asked for a preview, and
+   * without this the partial answer would stand in for a complete one forever.
+   * Absent on records written before per-field routing, which came from passes
+   * that always ran every enabled source (see enrich/adapter).
+   */
+  covered?: Field[];
 };
 
 export type Override = { bpm?: number; key?: string };
@@ -117,9 +126,10 @@ export async function clearCachedMisses(): Promise<number> {
 export async function putCachedLookup(
   key: string,
   hit: boolean,
-  data?: FeatureLookup
+  data?: FeatureLookup,
+  covered?: Field[]
 ): Promise<void> {
-  const rec: CachedLookup = { v: CACHE_VERSION, ts: Date.now(), hit, data };
+  const rec: CachedLookup = { v: CACHE_VERSION, ts: Date.now(), hit, data, covered };
   await put("lookups", key, rec);
 }
 

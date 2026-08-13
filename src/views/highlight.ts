@@ -1,12 +1,12 @@
 /**
- * The map has one highlight channel, and three controls want to drive it: a
- * search, suggestion mode and the playlist filter. One visual language for
+ * The map has one highlight channel, and four controls want to drive it: a
+ * search, a projected track's anchors, suggestion mode and the playlist filter. One visual language for
  * "highlighted" is worth keeping, so they resolve by precedence here instead
  * of overwriting each other, and whatever is being held back is named in the
  * readout — a highlight that silently loses is indistinguishable from a bug.
  */
 
-export type HighlightSource = "search" | "suggestions" | "playlist";
+export type HighlightSource = "search" | "anchors" | "suggestions" | "playlist";
 
 export type HighlightRequest = {
   source: HighlightSource;

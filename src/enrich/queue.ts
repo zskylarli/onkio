@@ -1,5 +1,6 @@
 import type { Track } from "../types";
 import { lookupFeatures } from "./adapter";
+import { neededFields } from "./fields";
 import { bpmOutOfRange, suggestBpmCorrection } from "../dsp/tempo";
 import { needsLookup } from "../collections/coverage";
 import { saveQueueState, loadQueueState } from "../store/db";
@@ -88,7 +89,15 @@ export class EnrichmentQueue {
       const track = this.tracks.get(pid);
       if (!track) continue;
       try {
-        const res = await lookupFeatures(track.artist, track.name);
+        // What this track is missing decides which tiers are asked at all
+        // (§3.4). A rekordbox track with BPM and key still routes to Deezer for
+        // its preview and label; a track that gains both from GetSongBPM never
+        // reaches iTunes.
+        const res = await lookupFeatures(
+          track.artist,
+          track.name,
+          neededFields(track)
+        );
         // A lookup source may not expose an abort signal. If Stop was pressed
         // while it was in flight, put the track back without applying its
         // answer so a later analysis pass can resume it cleanly.

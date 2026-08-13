@@ -49,6 +49,20 @@ export function setSongBpmApiKey(key: string): void {
   localStorage.setItem(KEY_STORAGE, key.trim());
 }
 
+/**
+ * Save the key and say which of the two things happened, so the field can
+ * confirm it. Emptying it is a real outcome rather than a failed save: it turns
+ * this tier off, and a UI that answered "Key saved" would claim the opposite.
+ *
+ * The key is read from storage on every lookup, so the tier it unlocks takes
+ * effect on the next pass with no reload.
+ */
+export function saveSongBpmApiKey(raw: string): "saved" | "cleared" {
+  const trimmed = raw.trim();
+  setSongBpmApiKey(trimmed);
+  return trimmed ? "saved" : "cleared";
+}
+
 /** Optional override: base URL of a user-hosted proxy, without a trailing slash. */
 export function getSongBpmProxy(): string | null {
   const v = readStorage(PROXY_STORAGE);

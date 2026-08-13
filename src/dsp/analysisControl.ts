@@ -36,3 +36,19 @@ export function analysisTargets(
 export function analysisLookupTargets(tracks: Track[]): Track[] {
   return tracks.filter((track) => needsLookup(track) || !track.label);
 }
+
+/** Unique tracks Analyze songs would actually work on. */
+export function analysisNeededCount(
+  tracks: Track[],
+  visiblePids: string[]
+): number {
+  const ids = new Set<string>();
+  for (const track of analysisLookupTargets(tracks)) ids.add(track.pid);
+  for (const target of analysisTargets(tracks, visiblePids)) ids.add(target.track.pid);
+  return ids.size;
+}
+
+export function describeAnalysisNeeded(n: number): string {
+  if (n <= 0) return "nothing needs analysis";
+  return n === 1 ? "1 song needs analysis" : `${n.toLocaleString()} songs need analysis`;
+}

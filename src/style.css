@@ -309,7 +309,12 @@ header h1 {
   cursor: pointer;
 }
 .file-drop.dragover { border-color: var(--accent); color: var(--accent); }
+.file-drop.has-files {
+  border-style: solid;
+  color: var(--text);
+}
 .file-drop input { display: none; }
+#file-drop-label { white-space: pre-line; overflow-wrap: anywhere; }
 
 /* An offer, not a call to action: the same muted link weight as the other
    secondary controls, tucked under the drop box rather than competing with it. */
@@ -613,6 +618,8 @@ main { grid-area: main; position: relative; overflow: hidden; }
   margin: 2px 4px 0 0;
 }
 .badge.warn { border-color: var(--warn); color: var(--warn); }
+.badge.external { color: var(--accent); border-color: var(--accent); }
+.ghost-note { margin-top: 8px; line-height: 1.35; }
 
 /* ---- popovers anchored to the map ---- */
 
@@ -858,22 +865,16 @@ a { color: var(--accent); }
 /* ---- collections + comparison ---- */
 
 #import-mode {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 4px 10px 8px;
+  display: flex;
+  gap: 6px;
   margin: 10px 0 8px;
 }
-#import-mode legend { padding: 0 4px; }
-#sidebar label.radio {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  margin: 4px 0;
-  font-size: 12px;
-  color: var(--text);
-  cursor: pointer;
+#import-mode[hidden] { display: none; }
+#import-mode button {
+  flex: 1;
+  width: auto;
+  margin: 0;
 }
-#sidebar label.radio input { accent-color: var(--accent); margin-top: 2px; }
 
 .link-btn {
   background: none !important;
