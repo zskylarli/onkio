@@ -2,7 +2,7 @@
 <!--
   Onkio: DEMO SUBSET of the GetSongBPM-analyzed Apple Music library.
 
-  300 tracks in 85 playlists, sampled from the full 1351-track slice for
+  300 tracks in 10 playlists, sampled from the full 1351-track slice for
   app demos: dense samples of the large genres (Pop, Alternative,
   Hip-Hop/Rap, Rock, R&B/Soul) so embeddings cluster visibly, plus every
   rare genre kept whole so the spread/outliers stay visible. All 39
@@ -315,546 +315,398 @@
     <TRACK TrackID="22699" Name="Between the Sheets" Artist="The Isley Brothers" Album="Between the Sheets" Genre="R&amp;B/Soul" TotalTime="340.015" Year="1983" AverageBpm="83.00" Tonality="8A" DateAdded="2026-08-10" Location="file://localhost/Onkio/no-local-file/86AD6A517DE6A999" />
   </COLLECTION>
   <PLAYLISTS>
-    <NODE Type="0" Name="ROOT" Count="85">
-      <NODE Name="$100.15" Type="1" KeyType="0" Entries="5">
-        <TRACK Key="15749" />
-        <TRACK Key="15041" />
-        <TRACK Key="16119" />
-        <TRACK Key="16833" />
-        <TRACK Key="14863" />
-      </NODE>
-      <NODE Name="9 minute mile" Type="1" KeyType="0" Entries="2">
-        <TRACK Key="18035" />
-        <TRACK Key="10120" />
-      </NODE>
-      <NODE Name="17 / 5" Type="1" KeyType="0" Entries="7">
-        <TRACK Key="18031" />
-        <TRACK Key="18783" />
-        <TRACK Key="17375" />
-        <TRACK Key="18149" />
-        <TRACK Key="17409" />
-        <TRACK Key="17905" />
-        <TRACK Key="18869" />
-      </NODE>
-      <NODE Name="24th birthday!" Type="1" KeyType="0" Entries="8">
-        <TRACK Key="14145" />
-        <TRACK Key="11102" />
-        <TRACK Key="12823" />
-        <TRACK Key="21275" />
-        <TRACK Key="20899" />
-        <TRACK Key="9238" />
-        <TRACK Key="17985" />
-        <TRACK Key="17179" />
-      </NODE>
-      <NODE Name="0305" Type="1" KeyType="0" Entries="1">
-        <TRACK Key="20385" />
-      </NODE>
-      <NODE Name="1208" Type="1" KeyType="0" Entries="2">
-        <TRACK Key="18143" />
-        <TRACK Key="13995" />
-      </NODE>
-      <NODE Name="517000" Type="1" KeyType="0" Entries="8">
-        <TRACK Key="13647" />
-        <TRACK Key="14423" />
-        <TRACK Key="21137" />
-        <TRACK Key="13273" />
-        <TRACK Key="18741" />
-        <TRACK Key="19243" />
-        <TRACK Key="13319" />
-        <TRACK Key="16119" />
-      </NODE>
-      <NODE Name="all of moonlight " Type="1" KeyType="0" Entries="4">
-        <TRACK Key="17501" />
-        <TRACK Key="9980" />
-        <TRACK Key="9238" />
-        <TRACK Key="9140" />
-      </NODE>
-      <NODE Name="alto contrarian " Type="1" KeyType="0" Entries="24">
-        <TRACK Key="20397" />
-        <TRACK Key="22521" />
-        <TRACK Key="22409" />
-        <TRACK Key="22073" />
-        <TRACK Key="21911" />
-        <TRACK Key="9832" />
-        <TRACK Key="22047" />
-        <TRACK Key="21787" />
-        <TRACK Key="21849" />
-        <TRACK Key="9650" />
-        <TRACK Key="9598" />
-        <TRACK Key="21733" />
-        <TRACK Key="22553" />
-        <TRACK Key="22039" />
-        <TRACK Key="22359" />
+    <NODE Type="0" Name="ROOT" Count="10">
+      <NODE Name="Night Drive" Type="1" KeyType="0" Entries="60">
+        <TRACK Key="9280" />
+        <TRACK Key="9286" />
         <TRACK Key="9368" />
-        <TRACK Key="10328" />
-        <TRACK Key="21725" />
-        <TRACK Key="9630" />
-        <TRACK Key="21941" />
-        <TRACK Key="21865" />
-        <TRACK Key="9636" />
-        <TRACK Key="10284" />
-        <TRACK Key="22263" />
-      </NODE>
-      <NODE Name="ambedo" Type="1" KeyType="0" Entries="4">
-        <TRACK Key="15929" />
-        <TRACK Key="20171" />
-        <TRACK Key="20049" />
-        <TRACK Key="20143" />
-      </NODE>
-      <NODE Name="anchorage " Type="1" KeyType="0" Entries="4">
-        <TRACK Key="15029" />
-        <TRACK Key="14977" />
-        <TRACK Key="16073" />
-        <TRACK Key="16063" />
-      </NODE>
-      <NODE Name="anthem" Type="1" KeyType="0" Entries="1">
-        <TRACK Key="13307" />
-      </NODE>
-      <NODE Name="avery" Type="1" KeyType="0" Entries="3">
-        <TRACK Key="10770" />
-        <TRACK Key="10362" />
-        <TRACK Key="20173" />
-      </NODE>
-      <NODE Name="bedroom" Type="1" KeyType="0" Entries="18">
-        <TRACK Key="15827" />
-        <TRACK Key="14875" />
-        <TRACK Key="15045" />
-        <TRACK Key="15819" />
-        <TRACK Key="15229" />
-        <TRACK Key="14917" />
-        <TRACK Key="14867" />
-        <TRACK Key="15749" />
-        <TRACK Key="17027" />
-        <TRACK Key="16917" />
-        <TRACK Key="15889" />
-        <TRACK Key="15027" />
-        <TRACK Key="15035" />
-        <TRACK Key="16841" />
-        <TRACK Key="15929" />
-        <TRACK Key="16885" />
-        <TRACK Key="14975" />
-        <TRACK Key="15869" />
-      </NODE>
-      <NODE Name="below freezing point " Type="1" KeyType="0" Entries="1">
-        <TRACK Key="11138" />
-      </NODE>
-      <NODE Name="black eyeliner" Type="1" KeyType="0" Entries="10">
-        <TRACK Key="19309" />
-        <TRACK Key="13431" />
-        <TRACK Key="12727" />
-        <TRACK Key="14339" />
-        <TRACK Key="10378" />
-        <TRACK Key="13731" />
-        <TRACK Key="21209" />
-        <TRACK Key="20883" />
-        <TRACK Key="18849" />
-        <TRACK Key="12397" />
-      </NODE>
-      <NODE Name="bluebird" Type="1" KeyType="0" Entries="3">
-        <TRACK Key="18583" />
-        <TRACK Key="17981" />
-        <TRACK Key="18383" />
-      </NODE>
-      <NODE Name="bops" Type="1" KeyType="0" Entries="29">
-        <TRACK Key="15917" />
-        <TRACK Key="15053" />
-        <TRACK Key="16111" />
-        <TRACK Key="14901" />
-        <TRACK Key="15767" />
-        <TRACK Key="16047" />
-        <TRACK Key="15897" />
-        <TRACK Key="15123" />
-        <TRACK Key="15167" />
-        <TRACK Key="15001" />
-        <TRACK Key="14935" />
-        <TRACK Key="15121" />
-        <TRACK Key="16131" />
-        <TRACK Key="18765" />
-        <TRACK Key="17027" />
-        <TRACK Key="17761" />
-        <TRACK Key="18327" />
-        <TRACK Key="18703" />
-        <TRACK Key="18573" />
-        <TRACK Key="18261" />
-        <TRACK Key="18073" />
-        <TRACK Key="18633" />
-        <TRACK Key="17723" />
-        <TRACK Key="18887" />
-        <TRACK Key="17919" />
-        <TRACK Key="17933" />
-        <TRACK Key="17739" />
-        <TRACK Key="18069" />
-        <TRACK Key="18849" />
-      </NODE>
-      <NODE Name="brown cow yogurt " Type="1" KeyType="0" Entries="1">
-        <TRACK Key="12057" />
-      </NODE>
-      <NODE Name="butler" Type="1" KeyType="0" Entries="4">
-        <TRACK Key="13521" />
+        <TRACK Key="9598" />
+        <TRACK Key="10182" />
+        <TRACK Key="10596" />
+        <TRACK Key="10622" />
+        <TRACK Key="11102" />
+        <TRACK Key="11132" />
+        <TRACK Key="11927" />
+        <TRACK Key="12353" />
         <TRACK Key="12463" />
         <TRACK Key="12633" />
-        <TRACK Key="17409" />
-      </NODE>
-      <NODE Name="café matinal" Type="1" KeyType="0" Entries="3">
-        <TRACK Key="17351" />
-        <TRACK Key="15929" />
-        <TRACK Key="20171" />
-      </NODE>
-      <NODE Name="chapter 8" Type="1" KeyType="0" Entries="1">
-        <TRACK Key="15027" />
-      </NODE>
-      <NODE Name="city strides" Type="1" KeyType="0" Entries="1">
-        <TRACK Key="10336" />
-      </NODE>
-      <NODE Name="combat boots " Type="1" KeyType="0" Entries="3">
+        <TRACK Key="13319" />
+        <TRACK Key="13521" />
+        <TRACK Key="13619" />
+        <TRACK Key="13647" />
+        <TRACK Key="14323" />
+        <TRACK Key="14339" />
+        <TRACK Key="14901" />
+        <TRACK Key="14933" />
+        <TRACK Key="14935" />
+        <TRACK Key="14977" />
+        <TRACK Key="15029" />
+        <TRACK Key="15035" />
+        <TRACK Key="15053" />
+        <TRACK Key="15767" />
+        <TRACK Key="15827" />
+        <TRACK Key="15889" />
+        <TRACK Key="15911" />
+        <TRACK Key="16841" />
+        <TRACK Key="16901" />
         <TRACK Key="17299" />
-        <TRACK Key="16849" />
-        <TRACK Key="14563" />
-      </NODE>
-      <NODE Name="delicate" Type="1" KeyType="0" Entries="9">
-        <TRACK Key="14247" />
-        <TRACK Key="14435" />
-        <TRACK Key="10302" />
-        <TRACK Key="18741" />
-        <TRACK Key="16131" />
-        <TRACK Key="14293" />
-        <TRACK Key="12567" />
-        <TRACK Key="13719" />
-        <TRACK Key="12607" />
-      </NODE>
-      <NODE Name="dominoes" Type="1" KeyType="0" Entries="1">
-        <TRACK Key="12823" />
-      </NODE>
-      <NODE Name="e.coli" Type="1" KeyType="0" Entries="1">
-        <TRACK Key="13995" />
-      </NODE>
-      <NODE Name="escapism" Type="1" KeyType="0" Entries="14">
-        <TRACK Key="20179" />
-        <TRACK Key="18963" />
-        <TRACK Key="20239" />
-        <TRACK Key="19045" />
+        <TRACK Key="17351" />
+        <TRACK Key="17723" />
+        <TRACK Key="17729" />
+        <TRACK Key="17903" />
+        <TRACK Key="17905" />
+        <TRACK Key="17927" />
+        <TRACK Key="18035" />
         <TRACK Key="18069" />
+        <TRACK Key="18323" />
+        <TRACK Key="18601" />
+        <TRACK Key="18963" />
+        <TRACK Key="19129" />
+        <TRACK Key="19243" />
+        <TRACK Key="19797" />
+        <TRACK Key="20035" />
+        <TRACK Key="20163" />
+        <TRACK Key="20171" />
+        <TRACK Key="20179" />
+        <TRACK Key="20239" />
+        <TRACK Key="20311" />
+        <TRACK Key="20397" />
+        <TRACK Key="20611" />
+        <TRACK Key="21751" />
+        <TRACK Key="22047" />
+        <TRACK Key="22073" />
+        <TRACK Key="22163" />
+        <TRACK Key="22699" />
+      </NODE>
+      <NODE Name="Pop Hits" Type="1" KeyType="0" Entries="21">
+        <TRACK Key="9128" />
+        <TRACK Key="9238" />
+        <TRACK Key="9970" />
+        <TRACK Key="9980" />
+        <TRACK Key="10110" />
+        <TRACK Key="10112" />
+        <TRACK Key="12057" />
+        <TRACK Key="12823" />
+        <TRACK Key="14435" />
+        <TRACK Key="16653" />
+        <TRACK Key="17501" />
+        <TRACK Key="17761" />
+        <TRACK Key="17933" />
+        <TRACK Key="18031" />
+        <TRACK Key="18071" />
+        <TRACK Key="18149" />
+        <TRACK Key="18383" />
+        <TRACK Key="18741" />
+        <TRACK Key="18887" />
+        <TRACK Key="20385" />
+        <TRACK Key="20899" />
+      </NODE>
+      <NODE Name="Indie Shelf" Type="1" KeyType="0" Entries="51">
+        <TRACK Key="9630" />
+        <TRACK Key="9650" />
+        <TRACK Key="10170" />
+        <TRACK Key="10182" />
+        <TRACK Key="10200" />
+        <TRACK Key="10302" />
+        <TRACK Key="10328" />
+        <TRACK Key="10336" />
+        <TRACK Key="10430" />
+        <TRACK Key="11963" />
+        <TRACK Key="11999" />
+        <TRACK Key="12727" />
+        <TRACK Key="13003" />
+        <TRACK Key="13453" />
+        <TRACK Key="13639" />
+        <TRACK Key="13799" />
+        <TRACK Key="14145" />
+        <TRACK Key="14365" />
+        <TRACK Key="14735" />
+        <TRACK Key="14867" />
+        <TRACK Key="14917" />
+        <TRACK Key="14975" />
+        <TRACK Key="15029" />
+        <TRACK Key="15041" />
+        <TRACK Key="15493" />
+        <TRACK Key="15699" />
+        <TRACK Key="15749" />
+        <TRACK Key="15889" />
+        <TRACK Key="15929" />
+        <TRACK Key="16047" />
+        <TRACK Key="16063" />
+        <TRACK Key="16917" />
+        <TRACK Key="17179" />
+        <TRACK Key="17375" />
+        <TRACK Key="17695" />
+        <TRACK Key="17927" />
+        <TRACK Key="18573" />
+        <TRACK Key="18849" />
+        <TRACK Key="19331" />
+        <TRACK Key="19661" />
+        <TRACK Key="19969" />
+        <TRACK Key="20231" />
+        <TRACK Key="20311" />
+        <TRACK Key="20883" />
+        <TRACK Key="21209" />
+        <TRACK Key="21435" />
+        <TRACK Key="21941" />
+        <TRACK Key="22163" />
+        <TRACK Key="22257" />
+        <TRACK Key="22353" />
+        <TRACK Key="22521" />
+      </NODE>
+      <NODE Name="Rock Block" Type="1" KeyType="0" Entries="28">
+        <TRACK Key="8920" />
+        <TRACK Key="8926" />
+        <TRACK Key="8928" />
+        <TRACK Key="9368" />
+        <TRACK Key="9832" />
+        <TRACK Key="10378" />
+        <TRACK Key="11132" />
+        <TRACK Key="12397" />
+        <TRACK Key="12693" />
+        <TRACK Key="12759" />
+        <TRACK Key="13265" />
+        <TRACK Key="13409" />
+        <TRACK Key="13431" />
+        <TRACK Key="13693" />
+        <TRACK Key="13731" />
+        <TRACK Key="17985" />
+        <TRACK Key="18023" />
+        <TRACK Key="18323" />
+        <TRACK Key="18703" />
+        <TRACK Key="19309" />
         <TRACK Key="20373" />
+        <TRACK Key="21865" />
+        <TRACK Key="21911" />
+        <TRACK Key="22263" />
+        <TRACK Key="22363" />
+        <TRACK Key="22409" />
+        <TRACK Key="22553" />
+        <TRACK Key="22655" />
+      </NODE>
+      <NODE Name="Hip-Hop Rotation" Type="1" KeyType="0" Entries="34">
+        <TRACK Key="10628" />
+        <TRACK Key="10674" />
+        <TRACK Key="11366" />
+        <TRACK Key="11887" />
+        <TRACK Key="12279" />
+        <TRACK Key="12463" />
+        <TRACK Key="12633" />
+        <TRACK Key="13217" />
+        <TRACK Key="13521" />
+        <TRACK Key="14421" />
+        <TRACK Key="14977" />
+        <TRACK Key="15001" />
+        <TRACK Key="15167" />
+        <TRACK Key="15897" />
+        <TRACK Key="15911" />
+        <TRACK Key="16073" />
+        <TRACK Key="16129" />
+        <TRACK Key="16825" />
+        <TRACK Key="16841" />
+        <TRACK Key="16901" />
+        <TRACK Key="17409" />
+        <TRACK Key="17905" />
+        <TRACK Key="18069" />
+        <TRACK Key="18337" />
+        <TRACK Key="18769" />
+        <TRACK Key="18963" />
+        <TRACK Key="19045" />
         <TRACK Key="19697" />
+        <TRACK Key="20059" />
+        <TRACK Key="20179" />
+        <TRACK Key="20295" />
+        <TRACK Key="20353" />
+        <TRACK Key="20787" />
+        <TRACK Key="21979" />
+      </NODE>
+      <NODE Name="Club &amp; Electronic" Type="1" KeyType="0" Entries="32">
+        <TRACK Key="10250" />
+        <TRACK Key="10332" />
+        <TRACK Key="10406" />
+        <TRACK Key="10616" />
+        <TRACK Key="10622" />
+        <TRACK Key="11931" />
+        <TRACK Key="12497" />
+        <TRACK Key="13505" />
+        <TRACK Key="13995" />
+        <TRACK Key="14563" />
+        <TRACK Key="15053" />
+        <TRACK Key="15917" />
+        <TRACK Key="16111" />
+        <TRACK Key="16119" />
+        <TRACK Key="16175" />
+        <TRACK Key="16185" />
+        <TRACK Key="17749" />
+        <TRACK Key="17779" />
+        <TRACK Key="17901" />
+        <TRACK Key="17919" />
+        <TRACK Key="17939" />
+        <TRACK Key="18067" />
+        <TRACK Key="18409" />
+        <TRACK Key="18751" />
+        <TRACK Key="18809" />
+        <TRACK Key="19431" />
+        <TRACK Key="19481" />
+        <TRACK Key="19543" />
         <TRACK Key="19603" />
         <TRACK Key="20171" />
-        <TRACK Key="20295" />
-        <TRACK Key="14933" />
-        <TRACK Key="20059" />
-        <TRACK Key="11887" />
-        <TRACK Key="19481" />
-      </NODE>
-      <NODE Name="falling above ground" Type="1" KeyType="0" Entries="4">
-        <TRACK Key="20311" />
-        <TRACK Key="19969" />
-        <TRACK Key="20385" />
-        <TRACK Key="11999" />
-      </NODE>
-      <NODE Name="fav" Type="1" KeyType="0" Entries="2">
-        <TRACK Key="21797" />
-        <TRACK Key="11408" />
-      </NODE>
-      <NODE Name="figures " Type="1" KeyType="0" Entries="3">
-        <TRACK Key="20173" />
-        <TRACK Key="10332" />
-        <TRACK Key="21797" />
-      </NODE>
-      <NODE Name="five and a half" Type="1" KeyType="0" Entries="3">
-        <TRACK Key="17903" />
-        <TRACK Key="18143" />
-        <TRACK Key="17695" />
-      </NODE>
-      <NODE Name="flaneur " Type="1" KeyType="0" Entries="1">
-        <TRACK Key="19543" />
-      </NODE>
-      <NODE Name="flashlight" Type="1" KeyType="0" Entries="11">
-        <TRACK Key="20163" />
-        <TRACK Key="19769" />
-        <TRACK Key="20397" />
-        <TRACK Key="17375" />
-        <TRACK Key="17227" />
-        <TRACK Key="19661" />
-        <TRACK Key="19275" />
-        <TRACK Key="19129" />
-        <TRACK Key="19331" />
-        <TRACK Key="17409" />
-        <TRACK Key="18149" />
-      </NODE>
-      <NODE Name="flight navidad " Type="1" KeyType="0" Entries="3">
-        <TRACK Key="16903" />
-        <TRACK Key="15911" />
-        <TRACK Key="16915" />
-      </NODE>
-      <NODE Name="GetReadyWithskylar  09.26.22" Type="1" KeyType="0" Entries="2">
-        <TRACK Key="13407" />
-        <TRACK Key="14323" />
-      </NODE>
-      <NODE Name="ginkgo " Type="1" KeyType="0" Entries="5">
-        <TRACK Key="15443" />
-        <TRACK Key="21435" />
-        <TRACK Key="10302" />
-        <TRACK Key="22359" />
-        <TRACK Key="20231" />
-      </NODE>
-      <NODE Name="gotanda" Type="1" KeyType="0" Entries="2">
-        <TRACK Key="21979" />
-        <TRACK Key="9644" />
-      </NODE>
-      <NODE Name="grail" Type="1" KeyType="0" Entries="4">
-        <TRACK Key="10406" />
-        <TRACK Key="10674" />
-        <TRACK Key="19481" />
-        <TRACK Key="10382" />
-      </NODE>
-      <NODE Name="hair down, no shoes " Type="1" KeyType="0" Entries="7">
-        <TRACK Key="13003" />
-        <TRACK Key="14365" />
-        <TRACK Key="12693" />
-        <TRACK Key="13693" />
-        <TRACK Key="12759" />
-        <TRACK Key="12727" />
-        <TRACK Key="11963" />
-      </NODE>
-      <NODE Name="healing is coming!" Type="1" KeyType="0" Entries="1">
-        <TRACK Key="13771" />
-      </NODE>
-      <NODE Name="hii" Type="1" KeyType="0" Entries="4">
-        <TRACK Key="10628" />
-        <TRACK Key="12279" />
-        <TRACK Key="12353" />
-        <TRACK Key="21275" />
-      </NODE>
-      <NODE Name="honeycrisp apple" Type="1" KeyType="0" Entries="2">
-        <TRACK Key="14099" />
-        <TRACK Key="10284" />
-      </NODE>
-      <NODE Name="je veux te " Type="1" KeyType="0" Entries="7">
-        <TRACK Key="18707" />
-        <TRACK Key="17749" />
-        <TRACK Key="18475" />
-        <TRACK Key="17587" />
-        <TRACK Key="17779" />
-        <TRACK Key="17915" />
-        <TRACK Key="18247" />
-      </NODE>
-      <NODE Name="john jay" Type="1" KeyType="0" Entries="2">
-        <TRACK Key="16825" />
-        <TRACK Key="14905" />
-      </NODE>
-      <NODE Name="karaoke " Type="1" KeyType="0" Entries="5">
-        <TRACK Key="17981" />
-        <TRACK Key="21275" />
-        <TRACK Key="9368" />
-        <TRACK Key="14099" />
-        <TRACK Key="21895" />
-      </NODE>
-      <NODE Name="karaoke pitch " Type="1" KeyType="0" Entries="1">
-        <TRACK Key="13639" />
-      </NODE>
-      <NODE Name="left my scarf at the bus stop" Type="1" KeyType="0" Entries="3">
-        <TRACK Key="13265" />
-        <TRACK Key="14521" />
-        <TRACK Key="11927" />
-      </NODE>
-      <NODE Name="lesbian pop music" Type="1" KeyType="0" Entries="1">
-        <TRACK Key="13995" />
-      </NODE>
-      <NODE Name="life in colorchesis" Type="1" KeyType="0" Entries="3">
-        <TRACK Key="21113" />
-        <TRACK Key="16129" />
-        <TRACK Key="21227" />
-      </NODE>
-      <NODE Name="long distance daughter" Type="1" KeyType="0" Entries="6">
-        <TRACK Key="11999" />
-        <TRACK Key="22257" />
-        <TRACK Key="10302" />
-        <TRACK Key="22353" />
-        <TRACK Key="22363" />
-        <TRACK Key="15029" />
-      </NODE>
-      <NODE Name="love bugs " Type="1" KeyType="0" Entries="14">
-        <TRACK Key="18323" />
-        <TRACK Key="17939" />
-        <TRACK Key="18417" />
-        <TRACK Key="18657" />
-        <TRACK Key="18741" />
-        <TRACK Key="17729" />
-        <TRACK Key="18601" />
-        <TRACK Key="17985" />
-        <TRACK Key="18071" />
-        <TRACK Key="17375" />
-        <TRACK Key="17927" />
-        <TRACK Key="18067" />
-        <TRACK Key="18023" />
-        <TRACK Key="11742" />
-      </NODE>
-      <NODE Name="maybe? " Type="1" KeyType="0" Entries="5">
         <TRACK Key="21293" />
-        <TRACK Key="15929" />
-        <TRACK Key="19969" />
-        <TRACK Key="20611" />
-        <TRACK Key="21117" />
+        <TRACK Key="21639" />
       </NODE>
-      <NODE Name="mic " Type="1" KeyType="0" Entries="1">
-        <TRACK Key="13767" />
-      </NODE>
-      <NODE Name="michin gae" Type="1" KeyType="0" Entries="3">
-        <TRACK Key="14905" />
-        <TRACK Key="16849" />
-        <TRACK Key="21397" />
-      </NODE>
-      <NODE Name="midday mirage " Type="1" KeyType="0" Entries="3">
-        <TRACK Key="16175" />
-        <TRACK Key="14933" />
-        <TRACK Key="16185" />
-      </NODE>
-      <NODE Name="midnight trance" Type="1" KeyType="0" Entries="4">
-        <TRACK Key="18409" />
-        <TRACK Key="18809" />
-        <TRACK Key="18751" />
-        <TRACK Key="17901" />
-      </NODE>
-      <NODE Name="movement" Type="1" KeyType="0" Entries="5">
-        <TRACK Key="16901" />
-        <TRACK Key="16129" />
-        <TRACK Key="17005" />
-        <TRACK Key="16825" />
-        <TRACK Key="16849" />
-      </NODE>
-      <NODE Name="need for speed" Type="1" KeyType="0" Entries="5">
-        <TRACK Key="15917" />
-        <TRACK Key="19309" />
-        <TRACK Key="10622" />
-        <TRACK Key="15767" />
+      <NODE Name="Soul &amp; R&amp;B" Type="1" KeyType="0" Entries="26">
+        <TRACK Key="9644" />
+        <TRACK Key="10382" />
         <TRACK Key="10384" />
-      </NODE>
-      <NODE Name="omw " Type="1" KeyType="0" Entries="5">
-        <TRACK Key="10622" />
-        <TRACK Key="14755" />
-        <TRACK Key="16653" />
-        <TRACK Key="21209" />
-        <TRACK Key="13995" />
-      </NODE>
-      <NODE Name="peter's housewarming" Type="1" KeyType="0" Entries="3">
-        <TRACK Key="19797" />
-        <TRACK Key="20353" />
-        <TRACK Key="19469" />
-      </NODE>
-      <NODE Name="pomegranate expiration date" Type="1" KeyType="0" Entries="10">
-        <TRACK Key="13799" />
-        <TRACK Key="10430" />
-        <TRACK Key="15699" />
-        <TRACK Key="22163" />
-        <TRACK Key="12759" />
-        <TRACK Key="11132" />
-        <TRACK Key="14735" />
-        <TRACK Key="10378" />
-        <TRACK Key="11742" />
-        <TRACK Key="14099" />
-      </NODE>
-      <NODE Name="pregame" Type="1" KeyType="0" Entries="3">
-        <TRACK Key="18069" />
-        <TRACK Key="14421" />
-        <TRACK Key="19697" />
-      </NODE>
-      <NODE Name="put your record on" Type="1" KeyType="0" Entries="2">
-        <TRACK Key="11927" />
-        <TRACK Key="20081" />
-      </NODE>
-      <NODE Name="quill&amp;ink" Type="1" KeyType="0" Entries="1">
-        <TRACK Key="21751" />
-      </NODE>
-      <NODE Name="riff " Type="1" KeyType="0" Entries="4">
-        <TRACK Key="10596" />
-        <TRACK Key="12497" />
-        <TRACK Key="14259" />
-        <TRACK Key="15027" />
-      </NODE>
-      <NODE Name="roastery " Type="1" KeyType="0" Entries="1">
-        <TRACK Key="16073" />
-      </NODE>
-      <NODE Name="runaway " Type="1" KeyType="0" Entries="2">
-        <TRACK Key="18337" />
-        <TRACK Key="15167" />
-      </NODE>
-      <NODE Name="running, seeing green" Type="1" KeyType="0" Entries="5">
-        <TRACK Key="19309" />
-        <TRACK Key="15911" />
-        <TRACK Key="19607" />
-        <TRACK Key="19339" />
-        <TRACK Key="19431" />
-      </NODE>
-      <NODE Name="screen" Type="1" KeyType="0" Entries="1">
-        <TRACK Key="20171" />
-      </NODE>
-      <NODE Name="shotgun" Type="1" KeyType="0" Entries="4">
-        <TRACK Key="13505" />
-        <TRACK Key="13493" />
-        <TRACK Key="12391" />
-        <TRACK Key="13453" />
-      </NODE>
-      <NODE Name="silence" Type="1" KeyType="0" Entries="1">
-        <TRACK Key="22257" />
-      </NODE>
-      <NODE Name="slightly morbid vibey songs" Type="1" KeyType="0" Entries="1">
-        <TRACK Key="15493" />
-      </NODE>
-      <NODE Name="snowing" Type="1" KeyType="0" Entries="4">
-        <TRACK Key="13409" />
-        <TRACK Key="17299" />
-        <TRACK Key="10200" />
-        <TRACK Key="17179" />
-      </NODE>
-      <NODE Name="spf" Type="1" KeyType="0" Entries="1">
-        <TRACK Key="10616" />
-      </NODE>
-      <NODE Name="spinning in a microcentrifuge" Type="1" KeyType="0" Entries="2">
-        <TRACK Key="18769" />
-        <TRACK Key="18143" />
-      </NODE>
-      <NODE Name="stasis" Type="1" KeyType="0" Entries="1">
-        <TRACK Key="16663" />
-      </NODE>
-      <NODE Name="stimul i" Type="1" KeyType="0" Entries="5">
-        <TRACK Key="20239" />
-        <TRACK Key="20821" />
-        <TRACK Key="19045" />
-        <TRACK Key="20787" />
-        <TRACK Key="13217" />
-      </NODE>
-      <NODE Name="summer mirage" Type="1" KeyType="0" Entries="1">
-        <TRACK Key="17819" />
-      </NODE>
-      <NODE Name="sunrise" Type="1" KeyType="0" Entries="5">
+        <TRACK Key="12353" />
         <TRACK Key="12643" />
+        <TRACK Key="13425" />
         <TRACK Key="13619" />
         <TRACK Key="14755" />
+        <TRACK Key="14863" />
+        <TRACK Key="14933" />
+        <TRACK Key="14935" />
+        <TRACK Key="15123" />
+        <TRACK Key="16833" />
+        <TRACK Key="16885" />
+        <TRACK Key="17005" />
+        <TRACK Key="17299" />
+        <TRACK Key="18657" />
+        <TRACK Key="18783" />
+        <TRACK Key="20049" />
+        <TRACK Key="20081" />
+        <TRACK Key="20143" />
+        <TRACK Key="20239" />
+        <TRACK Key="20821" />
+        <TRACK Key="21275" />
+        <TRACK Key="21797" />
+        <TRACK Key="22699" />
+      </NODE>
+      <NODE Name="Country &amp; Folk" Type="1" KeyType="0" Entries="25">
+        <TRACK Key="9598" />
+        <TRACK Key="9636" />
+        <TRACK Key="10284" />
+        <TRACK Key="12567" />
+        <TRACK Key="12607" />
+        <TRACK Key="13719" />
+        <TRACK Key="13771" />
+        <TRACK Key="14293" />
+        <TRACK Key="14521" />
+        <TRACK Key="16131" />
+        <TRACK Key="17739" />
+        <TRACK Key="17981" />
+        <TRACK Key="18073" />
+        <TRACK Key="18143" />
+        <TRACK Key="18261" />
+        <TRACK Key="18583" />
+        <TRACK Key="18633" />
+        <TRACK Key="18765" />
+        <TRACK Key="21113" />
+        <TRACK Key="21137" />
+        <TRACK Key="21725" />
+        <TRACK Key="21787" />
+        <TRACK Key="21849" />
+        <TRACK Key="22039" />
+        <TRACK Key="22073" />
+      </NODE>
+      <NODE Name="High Energy" Type="1" KeyType="0" Entries="53">
+        <TRACK Key="8920" />
+        <TRACK Key="8928" />
+        <TRACK Key="9630" />
+        <TRACK Key="10120" />
+        <TRACK Key="10200" />
+        <TRACK Key="10328" />
+        <TRACK Key="10378" />
+        <TRACK Key="10406" />
+        <TRACK Key="10674" />
+        <TRACK Key="11138" />
+        <TRACK Key="11408" />
+        <TRACK Key="11742" />
+        <TRACK Key="11887" />
+        <TRACK Key="11963" />
+        <TRACK Key="12397" />
+        <TRACK Key="12643" />
+        <TRACK Key="12727" />
+        <TRACK Key="13265" />
         <TRACK Key="13425" />
-        <TRACK Key="21117" />
-      </NODE>
-      <NODE Name="the great loop playlist" Type="1" KeyType="0" Entries="1">
+        <TRACK Key="13719" />
+        <TRACK Key="13731" />
+        <TRACK Key="13767" />
+        <TRACK Key="14247" />
+        <TRACK Key="14423" />
+        <TRACK Key="14875" />
+        <TRACK Key="14917" />
+        <TRACK Key="15027" />
+        <TRACK Key="16185" />
+        <TRACK Key="16915" />
+        <TRACK Key="17005" />
+        <TRACK Key="17027" />
+        <TRACK Key="17227" />
+        <TRACK Key="17587" />
+        <TRACK Key="17739" />
+        <TRACK Key="18073" />
+        <TRACK Key="18337" />
+        <TRACK Key="18573" />
+        <TRACK Key="18783" />
+        <TRACK Key="19275" />
+        <TRACK Key="19309" />
+        <TRACK Key="19607" />
         <TRACK Key="20173" />
-      </NODE>
-      <NODE Name="thunderstorm watch" Type="1" KeyType="0" Entries="1">
-        <TRACK Key="11931" />
-      </NODE>
-      <NODE Name="une croissant s'il vous plait" Type="1" KeyType="0" Entries="1">
-        <TRACK Key="22163" />
-      </NODE>
-      <NODE Name="watching lights fall" Type="1" KeyType="0" Entries="4">
         <TRACK Key="20317" />
-        <TRACK Key="12849" />
-        <TRACK Key="19243" />
-        <TRACK Key="20035" />
+        <TRACK Key="20883" />
+        <TRACK Key="21117" />
+        <TRACK Key="21435" />
+        <TRACK Key="21725" />
+        <TRACK Key="21941" />
+        <TRACK Key="22353" />
+        <TRACK Key="22359" />
+        <TRACK Key="22363" />
+        <TRACK Key="22521" />
+        <TRACK Key="22553" />
       </NODE>
-      <NODE Name="workout" Type="1" KeyType="0" Entries="7">
-        <TRACK Key="20295" />
-        <TRACK Key="11366" />
-        <TRACK Key="15167" />
-        <TRACK Key="15917" />
-        <TRACK Key="21639" />
-        <TRACK Key="16111" />
-        <TRACK Key="9238" />
+      <NODE Name="World &amp; Oddities" Type="1" KeyType="0" Entries="42">
+        <TRACK Key="9140" />
+        <TRACK Key="10362" />
+        <TRACK Key="10770" />
+        <TRACK Key="11138" />
+        <TRACK Key="11408" />
+        <TRACK Key="12391" />
+        <TRACK Key="12849" />
+        <TRACK Key="13273" />
+        <TRACK Key="13307" />
+        <TRACK Key="13407" />
+        <TRACK Key="13493" />
+        <TRACK Key="14099" />
+        <TRACK Key="14259" />
+        <TRACK Key="14905" />
+        <TRACK Key="15045" />
+        <TRACK Key="15121" />
+        <TRACK Key="15229" />
+        <TRACK Key="15443" />
+        <TRACK Key="15819" />
+        <TRACK Key="15869" />
+        <TRACK Key="16663" />
+        <TRACK Key="16849" />
+        <TRACK Key="16903" />
+        <TRACK Key="17227" />
+        <TRACK Key="17819" />
+        <TRACK Key="17903" />
+        <TRACK Key="17915" />
+        <TRACK Key="18247" />
+        <TRACK Key="18327" />
+        <TRACK Key="18417" />
+        <TRACK Key="18475" />
+        <TRACK Key="18707" />
+        <TRACK Key="18869" />
+        <TRACK Key="19339" />
+        <TRACK Key="19469" />
+        <TRACK Key="19769" />
+        <TRACK Key="20317" />
+        <TRACK Key="21227" />
+        <TRACK Key="21397" />
+        <TRACK Key="21733" />
+        <TRACK Key="21751" />
+        <TRACK Key="21895" />
       </NODE>
     </NODE>
   </PLAYLISTS>

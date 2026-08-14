@@ -95,7 +95,16 @@ import {
   needsLookup,
   type CollectionCoverage,
 } from "./collections/coverage";
-import { collectionColor } from "./render/palette";
+import {
+  collectionColor,
+  bpmBin,
+  bpmBinLabel,
+  decadeOf,
+  makeBpmScale,
+  normalizeGenre,
+  type BpmScale,
+  DEFAULT_BPM_SCALE,
+} from "./render/palette";
 import {
   findGaps,
   suggestQueries,
@@ -133,6 +142,14 @@ import {
   NeighborIndex,
   type Neighbor,
 } from "./views/neighbors";
+import {
+  TUTORIAL_STEPS,
+  placeCloud,
+  resolveTutorialEl,
+  tutorialActionIds,
+  tutorialRingIds,
+  type TutorialCloud,
+} from "./views/tutorial";
 
 // ---------- state ----------
 
@@ -182,6 +199,15 @@ let localIndex: FolderIndex | null = null;
 let localResolution: FolderResolution | null = null;
 let localByPid = new Map<string, LocalFileHandle>();
 
+let tutorialOn = false;
+let tutorialIndex = 0;
+/**
+ * Only a demo load that started on the first step may skip it. A library
+ * already in the session must not, or the cloud would jump past "load the demo"
+ * on restore.
+ */
+let tutorialAwaitEmbed = false;
+
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
 const previewAudio = new Audio();
@@ -195,6 +221,12 @@ let hoverTimer: number | undefined;
  */
 previewAudio.addEventListener("error", () => {
   if (loadedAudio) failPlayback(loadedAudio.pid);
+});
+previewAudio.addEventListener("ended", () => {
+  if (!loadedAudio) return;
+  const pid = loadedAudio.pid;
+  loadedAudio = null;
+  setPlayback(pid, null);
 });
 
 function esc(s: string): string {
@@ -266,6 +298,9 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "+" || e.key === "=") scatter?.zoomBy(1);
   if (e.key === "-" || e.key === "_") scatter?.zoomBy(-1);
   if (e.key === "Escape") {
+    // Session-only: the toggle is not written to storage, so Escape is the
+    // way out that does not also look like a key that did nothing.
+    if (tutorialOn) setTutorial(false);
     clearSearch();
     closeTrackPopover();
     closeGapPopover();
@@ -283,6 +318,133 @@ initInfoTips();
 // The ⓘ popups sit outside the panel to avoid being clipped by it, so the panel
 // scrolling moves their trigger out from under them.
 $("sidebar").addEventListener("scroll", repositionPopovers, { passive: true });
+
+// ---------- tutorial ----------
+
+function tutorialOnTarget(id: string): boolean {
+  const step = TUTORIAL_STEPS[tutorialIndex];
+  return tutorialOn && !!step && tutorialActionIds(step).includes(id);
+}
+
+function tutorialAdvanceIfTarget(id: string): void {
+  if (tutorialOnTarget(id)) tutorialDelta(1);
+}
+
+function setTutorial(on: boolean): void {
+  tutorialOn = on;
+  $("tutorial-toggle").setAttribute("aria-pressed", String(on));
+  renderTutorial();
+}
+
+function tutorialDelta(d: number): void {
+  if (!tutorialOn) return;
+  const next = tutorialIndex + d;
+  if (next < 0) return;
+  // Finishing the last step with → puts the clouds away; the index stays so
+  // turning the toggle back on resumes rather than restarting.
+  if (next >= TUTORIAL_STEPS.length) {
+    setTutorial(false);
+    return;
+  }
+  tutorialIndex = next;
+  renderTutorial();
+}
+
+function fillCloudCopy(el: HTMLElement, cloud: Pick<TutorialCloud, "body" | "cta">): void {
+  const body = el.querySelector(".tutorial-extra-body, #tutorial-body");
+  if (body) body.textContent = cloud.body;
+  const cta = el.querySelector<HTMLElement>(".tutorial-cta");
+  if (!cta) return;
+  if (cloud.cta) {
+    cta.hidden = false;
+    cta.textContent = cloud.cta;
+  } else {
+    cta.hidden = true;
+    cta.textContent = "";
+  }
+}
+
+function renderTutorial(): void {
+  document.querySelectorAll(".tutorial-target").forEach((el) => {
+    el.classList.remove("tutorial-target");
+  });
+  const cloud = $("tutorial-cloud");
+  const extras = $("tutorial-extras");
+  extras.replaceChildren();
+  if (!tutorialOn) {
+    cloud.hidden = true;
+    return;
+  }
+  const step = TUTORIAL_STEPS[tutorialIndex];
+  $("tutorial-index").textContent = `${tutorialIndex + 1} / ${TUTORIAL_STEPS.length}`;
+  fillCloudCopy(cloud, step);
+  $("tutorial-exports").hidden = !step.exports;
+  $<HTMLButtonElement>("tutorial-back").disabled = tutorialIndex === 0;
+  if (step.panel === "sidebar") setSidebarCollapsed(false);
+  if (step.panel === "set") setPanelOpen(true);
+  const detailsIds =
+    step.openDetails == null ? [] : Array.isArray(step.openDetails) ? step.openDetails : [step.openDetails];
+  for (const id of detailsIds) {
+    const details = document.getElementById(id);
+    if (details instanceof HTMLDetailsElement) details.open = true;
+  }
+  for (const id of step.reveal ?? []) {
+    const el = document.getElementById(id);
+    if (el) el.hidden = false;
+  }
+  // Color-by lives on the legend, which stays hidden until a map exists.
+  if ((step.reveal ?? []).includes("legend") || step.target === "legend-controls") {
+    $("legend").hidden = false;
+    $("legend").classList.remove("collapsed");
+  }
+  switchTab("map");
+  for (const extra of step.extras ?? []) {
+    const el = document.createElement("div");
+    el.className = "tutorial-cloud";
+    el.innerHTML = `<p class="tutorial-extra-body"></p><p class="tutorial-cta"></p>`;
+    fillCloudCopy(el, extra);
+    extras.append(el);
+  }
+  for (const id of tutorialRingIds(step)) {
+    document.getElementById(id)?.classList.add("tutorial-target");
+  }
+  cloud.hidden = false;
+  requestAnimationFrame(placeTutorialClouds);
+}
+
+function placeTutorialClouds(): void {
+  if (!tutorialOn) return;
+  const step = TUTORIAL_STEPS[tutorialIndex];
+  const placeEl = resolveTutorialEl({
+    target: step.place ?? step.target,
+    fallback: step.fallback,
+  });
+  const occupied = [
+    placeCloud($("tutorial-cloud"), placeEl, {
+      prefer: step.prefer,
+      pin: step.pin,
+      align: step.align,
+    }),
+  ];
+  const extraEls = [...$("tutorial-extras").children] as HTMLElement[];
+  (step.extras ?? []).forEach((extra, i) => {
+    const el = extraEls[i];
+    if (!el) return;
+    occupied.push(
+      placeCloud(el, resolveTutorialEl({ target: extra.place ?? extra.target, fallback: extra.fallback }), {
+        avoid: occupied,
+        prefer: extra.prefer,
+        pin: extra.pin,
+        align: extra.align,
+      })
+    );
+  });
+  resolveTutorialEl(step)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+$("tutorial-toggle").addEventListener("click", () => setTutorial(!tutorialOn));
+$("tutorial-back").addEventListener("click", () => tutorialDelta(-1));
+$("tutorial-next").addEventListener("click", () => tutorialDelta(1));
 
 // ---------- import ----------
 
@@ -369,6 +531,7 @@ async function loadDemoCollection(): Promise<void> {
   const status = $("import-status");
   setDemoBusy(true);
   status.textContent = "Fetching the demo collection…";
+  if (tutorialOnTarget("demo-load")) tutorialAwaitEmbed = true;
   try {
     const res = await fetch(demoCollectionUrl(import.meta.env.BASE_URL));
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`.trim());
@@ -694,14 +857,9 @@ async function onLibraryLoaded(input: Library): Promise<void> {
   scatter?.setCollections(lib.collections ?? []);
   renderCollections();
 
-  const pf = $<HTMLSelectElement>("playlist-filter");
-  pf.innerHTML = '<option value="">— none —</option>';
-  for (const p of lib.playlists) {
-    const opt = document.createElement("option");
-    opt.value = p.name;
-    opt.textContent = `${p.name} (${p.pids.length})`;
-    pf.appendChild(opt);
-  }
+  const pf = $<HTMLSelectElement>("highlight-kind");
+  if (![...pf.options].some((o) => o.value === pf.value)) pf.value = "";
+  fillHighlightItems();
   // Hits index into the track array that just went away.
   searchInput.value = "";
   runSearch();
@@ -1013,6 +1171,23 @@ function renderPlayback(): void {
   if (badge && playback && hoveredPid === playback.pid) {
     badge.textContent = PLAYBACK_TEXT[playback.state];
   }
+  paintTransport(document.getElementById("play-audio") as HTMLButtonElement | null, popoverTrack?.pid ?? null);
+  for (const btn of document.querySelectorAll<HTMLButtonElement>("#set-list .play")) {
+    paintTransport(btn, btn.dataset.pid ?? null);
+  }
+}
+
+function clickTransportOn(pid: string): boolean {
+  if (playback?.pid === pid && playback.state === "loading") return loadedAudio?.origin !== "hover";
+  return loadedAudio?.pid === pid && loadedAudio.origin === "click" && !previewAudio.paused;
+}
+
+function paintTransport(btn: HTMLButtonElement | null, pid: string | null): void {
+  if (!btn || !pid) return;
+  const on = clickTransportOn(pid);
+  btn.textContent = on ? "■" : "▶";
+  btn.title = on ? "Stop" : "Play";
+  btn.setAttribute("aria-label", on ? "Stop" : "Play");
 }
 
 // ---------- browsing mode ----------
@@ -1042,7 +1217,9 @@ function setBrowsing(on: boolean): void {
   if (!on) stopHoverAudio();
 }
 
-$("browse-toggle").addEventListener("click", () => setBrowsing(!browsing));
+$("browse-toggle").addEventListener("click", () => {
+  setBrowsing(!browsing);
+});
 
 setBrowsing(localStorage.getItem(BROWSING_KEY) === "on");
 
@@ -1071,6 +1248,14 @@ function stopHoverAudio(): void {
   previewAudio.pause();
 }
 
+function stopPlayback(): void {
+  playRequest += 1;
+  previewAudio.pause();
+  const pid = loadedAudio?.pid ?? playback?.pid ?? null;
+  loadedAudio = null;
+  if (pid) setPlayback(pid, null);
+}
+
 /** Work out what a hover owes the audio, and do it. */
 function applyHoverPlayback(track: Track | null): void {
   const target = track
@@ -1092,6 +1277,7 @@ function applyHoverPlayback(track: Track | null): void {
  */
 async function playTrack(t: Track, origin: PlayOrigin): Promise<void> {
   const request = ++playRequest;
+  if (origin === "click") setPlayback(t.pid, "loading");
   const handle = localByPid.get(t.pid);
   const local = handle ? await localAudioUrl(t.pid, handle, request) : null;
 
@@ -1484,8 +1670,7 @@ function withExternalCollection(lib: Library): CollectionMeta[] {
 async function placeExternalCandidate(candidate: ExternalCandidate): Promise<boolean> {
   const pid = externalPid(candidate.id);
   if (trackPosition(pid)) {
-    // Chosen twice, or added in an earlier session: go to the one that exists.
-    focusTrack(pid);
+    showTrackOnMap(pid);
     return true;
   }
   // Tempo, year and label are on the per-track and per-album endpoints rather
@@ -1683,9 +1868,14 @@ function onEmbeddingReady(): void {
   rebasePlacedTracks();
   applyGapsVisibility();
   applyHighlight();
+  fillHighlightItems();
   renderLegend();
   renderCoverage();
   updatePriority();
+  if (tutorialAwaitEmbed) {
+    tutorialAwaitEmbed = false;
+    tutorialDelta(1);
+  }
 }
 
 /**
@@ -1866,6 +2056,10 @@ $("dsp-start").addEventListener("click", async () => {
     status.textContent = "stopped";
     return;
   }
+
+  // The CTA was the click, including when nothing needs analysis. Waiting for
+  // the run to finish would leave the cloud on a button that has already acted.
+  if (tutorialOnTarget("dsp-start")) tutorialDelta(1);
 
   const targets = analysisTargets(library.tracks, scatter?.visiblePids() ?? []);
   const lookupTargets = analysisLookupTargets(library.tracks);
@@ -2177,8 +2371,10 @@ function handleHover(track: Track | null, x: number, y: number): void {
 
 function handleClick(track: Track | null): void {
   setAutoplayNote(false);
-  if (track) openTrackPopover(track);
-  else {
+  if (track) {
+    openTrackPopover(track);
+    tutorialAdvanceIfTarget("scatter-canvas");
+  } else {
     closeTrackPopover();
     closeGapPopover();
   }
@@ -2220,6 +2416,7 @@ function repositionPopovers(): void {
   }
   if (popoverGap) anchorPopover($("gap-popover"), popoverGap.x, popoverGap.y);
   repositionInfoPopups();
+  if (tutorialOn) placeTutorialClouds();
 }
 
 window.addEventListener("resize", repositionPopovers);
@@ -2385,15 +2582,21 @@ function renderTrackPopover(): void {
            </div>`
     }
     <div class="small">${derived("bpm")}${derived("key")}</div>
-    <div class="actions">
-      ${inLibrary ? `<button id="ov-save" class="primary">Save edits</button>` : ""}
-      ${
-        record && !record.added
-          ? `<button id="add-external" class="primary">Add to Searches</button>`
-          : ""
-      }
-      <button id="add-to-set">Add to set</button>
-      <button id="play-audio" title="${esc(audio.hint)}">${audio.label}</button>
+    <div class="actions track-actions">
+      <div class="actions-side">
+        ${inLibrary ? `<button id="ov-save" class="primary">Save edits</button>` : ""}
+        ${
+          record && !record.added
+            ? `<button id="add-external" class="primary">Add to Searches</button>`
+            : ""
+        }
+      </div>
+      <div class="play-pair">
+        <button type="button" id="play-audio" title="Play" aria-label="Play">▶</button>
+      </div>
+      <div class="actions-side right">
+        <button id="add-to-set">Add to set</button>
+      </div>
     </div>
     ${
       record?.added
@@ -2453,11 +2656,10 @@ function renderTrackPopover(): void {
 
   $("add-to-set").addEventListener("click", () => appendToSet(t));
 
-  // Explicit, so it plays regardless of Browsing mode and pointer movement
-  // afterwards does not silence it. playTrack reports "finding audio" while it
-  // resolves and distinguishes "no preview found" from "preview unavailable"
-  // after, which is the whole of what a track nobody has looked up can be told.
-  $("play-audio").addEventListener("click", () => void playTrack(t, "click"));
+  $("play-audio").addEventListener("click", () => {
+    if (clickTransportOn(t.pid)) stopPlayback();
+    else void playTrack(t, "click");
+  });
 
   renderPlayback();
 
@@ -2690,7 +2892,11 @@ function setPanelIsOpen(): boolean {
 
 setPanelOpen(localStorage.getItem(SET_PANEL_KEY) === "shown");
 
-$("set-toggle").addEventListener("click", () => setPanelOpen(!setPanelIsOpen()));
+$("set-toggle").addEventListener("click", () => {
+  const open = !setPanelIsOpen();
+  setPanelOpen(open);
+  if (open) tutorialAdvanceIfTarget("set-toggle");
+});
 $("set-close").addEventListener("click", () => setPanelOpen(false));
 
 $("suggest-toggle").addEventListener("change", (e) => {
@@ -2838,8 +3044,14 @@ function renderSet(): void {
         <div class="meta muted">${t.key ? camelotDisplay(t.key) : "?"} · ${t.bpm ? Math.round(t.bpm) + " BPM" : "?"}${t.source?.bpm ? " · " + esc(t.source.bpm) : ""}</div>
         ${warnText ? `<div class="warnings">⚠ ${warnText}</div>` : ""}
       </div>
+      <button class="play" type="button" data-pid="${esc(t.pid)}" title="Play" aria-label="Play">▶</button>
       <button class="remove" title="Remove from the set" aria-label="Remove from the set">✕</button>
     `;
+    li.querySelector(".play")!.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (clickTransportOn(t.pid)) stopPlayback();
+      else void playTrack(t, "click");
+    });
     li.querySelector(".remove")!.addEventListener("click", () => {
       setList.splice(i, 1);
       renderSet();
@@ -2909,6 +3121,7 @@ function renderSet(): void {
   }
   drawSparkline();
   applyHighlight();
+  renderPlayback();
 }
 
 /** Keep the moved row under the keyboard, since rendering replaced the element. */
@@ -2980,7 +3193,100 @@ $<HTMLInputElement>("playlist-slider").addEventListener("change", () => {
   runEmbedding();
 });
 
-$<HTMLSelectElement>("playlist-filter").addEventListener("change", applyHighlight);
+$<HTMLSelectElement>("highlight-kind").addEventListener("change", () => {
+  fillHighlightItems();
+  applyHighlight();
+});
+$<HTMLSelectElement>("highlight-item").addEventListener("change", applyHighlight);
+
+let highlightBpmScale: BpmScale = DEFAULT_BPM_SCALE;
+
+function fillHighlightItems(): void {
+  const kind = $<HTMLSelectElement>("highlight-kind").value;
+  const item = $<HTMLSelectElement>("highlight-item");
+  const prev = item.value;
+  item.replaceChildren();
+  if (!kind || !library) {
+    item.disabled = true;
+    item.append(new Option("—", ""));
+    return;
+  }
+  item.disabled = false;
+  item.append(new Option("— none —", ""));
+  for (const option of highlightItemOptions(kind)) {
+    item.append(new Option(option.label, option.value));
+  }
+  if ([...item.options].some((o) => o.value === prev)) item.value = prev;
+}
+
+function highlightItemOptions(kind: string): { value: string; label: string }[] {
+  if (!library) return [];
+  switch (kind) {
+    case "playlist":
+      return library.playlists.map((p) => ({
+        value: p.name,
+        label: `${p.name} (${p.pids.length})`,
+      }));
+    case "cluster": {
+      if (!clusters) return [];
+      const counts = new Map<number, number>();
+      for (let i = 0; i < clusters.length; i++) {
+        counts.set(clusters[i], (counts.get(clusters[i]) ?? 0) + 1);
+      }
+      return [...counts.keys()]
+        .sort((a, b) => a - b)
+        .map((c) => ({
+          value: String(c),
+          label: `${clusterLabels.get(c) ?? `Cluster ${c + 1}`} (${counts.get(c)})`,
+        }));
+    }
+    case "collection":
+      return (library.collections ?? []).map((c) => ({
+        value: c.id,
+        label: `${c.label} (${c.trackCount})`,
+      }));
+    case "genre": {
+      const counts = new Map<string, { label: string; n: number }>();
+      for (const t of library.tracks) {
+        const g = normalizeGenre(t.genre);
+        if (!g) continue;
+        const cur = counts.get(g.key) ?? { label: g.label, n: 0 };
+        cur.n += 1;
+        counts.set(g.key, cur);
+      }
+      return [...counts]
+        .sort((a, b) => b[1].n - a[1].n || a[1].label.localeCompare(b[1].label))
+        .map(([key, v]) => ({ value: key, label: `${v.label} (${v.n})` }));
+    }
+    case "bpm": {
+      highlightBpmScale = makeBpmScale(
+        library.tracks.map((t) => t.bpm).filter((b): b is number => b != null && b > 0)
+      );
+      const counts = new Array<number>(highlightBpmScale.count).fill(0);
+      for (const t of library.tracks) {
+        if (t.bpm) counts[bpmBin(t.bpm, highlightBpmScale)] += 1;
+      }
+      return counts.flatMap((n, i) =>
+        n > 0
+          ? [{ value: String(i), label: `${bpmBinLabel(i, highlightBpmScale)} (${n})` }]
+          : []
+      );
+    }
+    case "year": {
+      const counts = new Map<number, number>();
+      for (const t of library.tracks) {
+        if (!t.year) continue;
+        const d = decadeOf(t.year);
+        counts.set(d, (counts.get(d) ?? 0) + 1);
+      }
+      return [...counts.keys()]
+        .sort((a, b) => a - b)
+        .map((d) => ({ value: String(d), label: `${d}s (${counts.get(d)})` }));
+    }
+    default:
+      return [];
+  }
+}
 
 // ---------- highlighting ----------
 
@@ -3011,15 +3317,60 @@ function suggestionHighlight(): HighlightRequest | null {
 }
 
 function playlistHighlight(): HighlightRequest | null {
-  const name = $<HTMLSelectElement>("playlist-filter").value;
-  if (!library || !name) return null;
-  const pl = library.playlists.find((p) => p.name === name);
-  if (!pl) return null;
+  const kind = $<HTMLSelectElement>("highlight-kind").value;
+  const value = $<HTMLSelectElement>("highlight-item").value;
+  if (!library || !kind || !value) return null;
+  const tracks = library.tracks;
+  let pids: string[] = [];
+  let label = "";
+  switch (kind) {
+    case "playlist": {
+      const pl = library.playlists.find((p) => p.name === value);
+      if (!pl) return null;
+      pids = pl.pids;
+      label = `${counted(pids.length, "track")} in "${value}"`;
+      break;
+    }
+    case "cluster": {
+      if (!clusters) return null;
+      const c = Number(value);
+      pids = tracks.filter((_, i) => clusters![i] === c).map((t) => t.pid);
+      label = `${counted(pids.length, "track")} in ${clusterLabels.get(c) ?? `cluster ${c + 1}`}`;
+      break;
+    }
+    case "collection":
+      pids = tracks.filter((t) => t.collection === value).map((t) => t.pid);
+      label = `${counted(pids.length, "track")} in that collection`;
+      break;
+    case "genre":
+      pids = tracks.filter((t) => normalizeGenre(t.genre)?.key === value).map((t) => t.pid);
+      label = `${counted(pids.length, "track")} in that genre`;
+      break;
+    case "bpm": {
+      const bin = Number(value);
+      pids = tracks
+        .filter((t) => t.bpm != null && bpmBin(t.bpm, highlightBpmScale) === bin)
+        .map((t) => t.pid);
+      label = `${counted(pids.length, "track")} in that BPM range`;
+      break;
+    }
+    case "year": {
+      const d = Number(value);
+      pids = tracks
+        .filter((t) => t.year != null && decadeOf(t.year) === d)
+        .map((t) => t.pid);
+      label = `${counted(pids.length, "track")} from the ${d}s`;
+      break;
+    }
+    default:
+      return null;
+  }
+  if (pids.length === 0) return null;
   return {
     source: "playlist",
-    label: `${counted(pl.pids.length, "track")} in "${name}"`,
-    name: "the playlist filter",
-    pids: pl.pids,
+    label,
+    name: "the highlight filter",
+    pids,
   };
 }
 
@@ -3099,13 +3450,15 @@ function searchHit(target: EventTarget | null): HTMLButtonElement | null {
 searchResults.addEventListener("pointerover", (event) => {
   scatter?.setExternalHover(searchHit(event.target)?.dataset.pid ?? null);
 });
-searchResults.addEventListener("pointerleave", () => scatter?.setExternalHover(null));
+searchResults.addEventListener("pointerleave", () => {
+  // Closing the list after a click fires leave; do not wipe the pulse we just set.
+  if (!searchResults.hidden) scatter?.setExternalHover(null);
+});
 searchResults.addEventListener("focusin", (event) => {
   scatter?.setExternalHover(searchHit(event.target)?.dataset.pid ?? null);
 });
 searchResults.addEventListener("focusout", (event) => {
-  // Moving directly to another candidate is a switch, not a moment with no
-  // candidate. focusin will install the new one immediately afterwards.
+  if (searchResults.hidden) return;
   if (!searchHit(event.relatedTarget)) scatter?.setExternalHover(null);
 });
 searchResults.addEventListener("click", (event) => {
@@ -3123,7 +3476,7 @@ searchResults.addEventListener("click", (event) => {
   }
   const pid = hit.dataset.pid;
   if (!pid) return;
-  focusTrack(pid);
+  showTrackOnMap(pid);
   dismissSearchResults();
 });
 
@@ -3204,7 +3557,7 @@ async function chooseExternal(index: number): Promise<void> {
   const candidate = externalSearch.candidates[index];
   if (!candidate) return;
   if (candidate.localPid) {
-    focusTrack(candidate.localPid);
+    showTrackOnMap(candidate.localPid);
     dismissSearchResults();
     return;
   }
@@ -3216,7 +3569,6 @@ async function chooseExternal(index: number): Promise<void> {
 
 function dismissSearchResults(): void {
   searchResultsDismissed = nextSearchMenuDismissed(searchResultsDismissed, "result-selected");
-  scatter?.setExternalHover(null);
   searchResults.hidden = true;
   searchInput.setAttribute("aria-expanded", "false");
 }
@@ -3261,7 +3613,7 @@ function renderSearchResults(query: string): void {
     if (note) parts.push(`<div class="muted small">${esc(note)}</div>`);
     if (externalSearch.kind === "offer" || externalSearch.kind === "failed") {
       parts.push(
-        `<button type="button" class="search-hit" data-external-search="1">
+        `<button type="button" class="search-hit" id="search-deezer" data-external-search="1">
           <span class="hit-name">Search Deezer</span>
           <span class="hit-artist">Look outside your library</span>
         </button>`
@@ -3293,6 +3645,18 @@ function renderSearchResults(query: string): void {
       `${btn.querySelector(".hit-name")?.textContent ?? ""}, ${btn.querySelector(".hit-artist")?.textContent ?? ""}`
     );
   });
+  if (tutorialOn && tutorialOnTarget("search-deezer")) {
+    document.getElementById("search-deezer")?.classList.add("tutorial-target");
+    requestAnimationFrame(placeTutorialClouds);
+  }
+}
+
+/** Pin the popover and pulse the dot without moving the camera. */
+function showTrackOnMap(pid: string): void {
+  const track = trackByPid(pid);
+  if (!track) return;
+  openTrackPopover(track);
+  scatter?.setExternalHover(pid);
 }
 
 /** Go to a track from the result list: camera onto it, popover pinned to it. */

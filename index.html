@@ -17,9 +17,10 @@
         <h1>Onkio</h1>
         <nav id="tabs">
           <button data-tab="map" class="active">Map</button>
-          <button data-tab="taste">Taste</button>
+          <button id="tab-taste" data-tab="taste">Taste</button>
         </nav>
         <button id="set-toggle" aria-expanded="false" aria-controls="set-panel" title="Set builder  ]">Set Builder<span id="set-count"></span></button>
+        <button id="tutorial-toggle" aria-pressed="false" title="Tutorial">Tutorial</button>
         <button id="theme-toggle" class="icon-btn" title="Switch theme" aria-label="Switch theme">☀</button>
       </header>
 
@@ -262,7 +263,7 @@
               <button id="legend-collapse" class="icon-btn" aria-expanded="true" aria-controls="legend-body" aria-label="Minimize the legend" title="Minimize the legend">▾</button>
             </div>
             <div id="legend-body">
-              <div class="legend-controls">
+              <div class="legend-controls" id="legend-controls">
                 <label class="legend-control">
                   <span>Color by</span>
                   <select id="color-mode">
@@ -274,12 +275,23 @@
                     <option value="year">Year</option>
                   </select>
                 </label>
-                <label class="legend-control">
-                  <span>Highlight playlist</span>
-                  <select id="playlist-filter" aria-label="Highlight playlist">
-                    <option value="">— none —</option>
-                  </select>
-                </label>
+                <div class="highlight-by">
+                  <span>Highlight by</span>
+                  <div class="highlight-pair">
+                    <select id="highlight-kind" aria-label="Highlight category">
+                      <option value="">— none —</option>
+                      <option value="playlist">Playlist</option>
+                      <option value="cluster">Cluster</option>
+                      <option value="collection">Collection</option>
+                      <option value="genre">Genre</option>
+                      <option value="bpm">BPM</option>
+                      <option value="year">Year</option>
+                    </select>
+                    <select id="highlight-item" aria-label="Highlight item" disabled>
+                      <option value="">—</option>
+                    </select>
+                  </div>
+                </div>
                 <div id="highlight-status" class="muted small"></div>
               </div>
               <div id="legend-items"></div>
@@ -294,6 +306,30 @@
           <div id="tooltip" hidden></div>
           <div id="track-popover" class="popover" hidden></div>
           <div id="gap-popover" class="popover" hidden></div>
+          <div id="tutorial-cloud" class="tutorial-cloud" hidden>
+            <div id="tutorial-index" class="muted small"></div>
+            <p id="tutorial-body"></p>
+            <div id="tutorial-exports" hidden>
+              <details>
+                <summary>rekordbox XML</summary>
+                <p class="muted small">File → Export Collection in xml format</p>
+              </details>
+              <details>
+                <summary>rekordbox TXT</summary>
+                <p class="muted small">Export a playlist as TXT (fixed-format text)</p>
+              </details>
+              <details>
+                <summary>Apple Music XML</summary>
+                <p class="muted small">File → Library → Export Library</p>
+              </details>
+            </div>
+            <p id="tutorial-cta" class="tutorial-cta"></p>
+            <div class="tutorial-nav">
+              <button type="button" id="tutorial-back" class="icon-btn" aria-label="Previous step">←</button>
+              <button type="button" id="tutorial-next" class="icon-btn" aria-label="Next step">→</button>
+            </div>
+          </div>
+          <div id="tutorial-extras"></div>
         </div>
 
         <div id="view-taste" class="view"><div id="taste-body"></div></div>
@@ -314,7 +350,7 @@
           </span>
           <button id="set-close" class="icon-btn" title="Close  ]" aria-label="Close the set builder">✕</button>
         </div>
-        <label class="check"><input type="checkbox" id="suggest-toggle" /> Suggestion mode</label>
+        <label class="check" id="suggest-label"><input type="checkbox" id="suggest-toggle" /> Suggestion mode</label>
         <canvas id="sparkline" height="60"></canvas>
         <div class="set-actions">
           <button id="export-m3u8">Export M3U8</button>
