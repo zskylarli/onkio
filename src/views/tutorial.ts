@@ -69,7 +69,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     pin: "inside-bottom",
   },
   {
-    body: "Color by cluster (determined by the algorithm), collection, BPM, key, or year. You can also highlight by playlist.",
+    body: "Color by or highlight a specific cluster (determined by the algorithm), collection, BPM, key, or year.",
     cta: 'Try changing "Color by" and highlight a playlist.',
     target: "legend-controls",
     reveal: ["legend"],
@@ -126,6 +126,15 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     body: 'Drag to reorder songs, or add new songs by clicking on individual dots → "Add to set". Suggestion mode highlights mixable next tracks.',
     cta: "Turn on Suggestion mode, then add a highlighted song.",
     target: "suggest-label",
+    place: "map-toolbar",
+    pin: "below-avoid-set",
+    panel: "set",
+  },
+  {
+    body: "You can copy the set to your clipboard, or export as a M3U8 file that can be directly imported into Rekordbox as a new playlist, or to streaming platforms via external tools like [Tune My Music](https://www.tunemymusic.com/).",
+    cta: "Click Copy tracklist to add to your clipboard",
+    target: "export-text",
+    rings: ["export-m3u8"],
     place: "set-panel",
     prefer: "left",
     panel: "set",
@@ -134,7 +143,8 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     body: "And that's it! You can also look at your taste profile, switch between Dark/Light mode, and find gaps in your music collection.",
     cta: "Toggle dark/light mode",
     target: "tab-taste",
-    prefer: "below",
+    place: "map-toolbar",
+    pin: "below-avoid-set",
     rings: ["tab-taste", "gaps-toggle", "theme-toggle"],
   },
   {
@@ -156,6 +166,28 @@ export function tutorialRingIds(step: TutorialStep): string[] {
 
 export function resolveTutorialEl(cloud: Pick<TutorialCloud, "target" | "fallback">): HTMLElement | null {
   return document.getElementById(cloud.target) ?? (cloud.fallback ? document.getElementById(cloud.fallback) : null);
+}
+
+/** Bodies are plain text, except `[label](https://…)` which becomes a real link. */
+const TUTORIAL_LINK = /\[([^\]]+)\]\((https:\/\/[^)\s]+)\)/g;
+
+export function fillTutorialText(el: Element, text: string): void {
+  el.replaceChildren();
+  const frag = document.createDocumentFragment();
+  let last = 0;
+  for (const match of text.matchAll(TUTORIAL_LINK)) {
+    const start = match.index ?? 0;
+    if (start > last) frag.append(text.slice(last, start));
+    const a = document.createElement("a");
+    a.href = match[2];
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.textContent = match[1];
+    frag.append(a);
+    last = start + match[0].length;
+  }
+  if (last < text.length) frag.append(text.slice(last));
+  el.append(frag);
 }
 
 const MARGIN = 12;

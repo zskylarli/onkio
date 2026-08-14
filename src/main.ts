@@ -144,6 +144,7 @@ import {
 } from "./views/neighbors";
 import {
   TUTORIAL_STEPS,
+  fillTutorialText,
   placeCloud,
   resolveTutorialEl,
   tutorialActionIds,
@@ -352,7 +353,7 @@ function tutorialDelta(d: number): void {
 
 function fillCloudCopy(el: HTMLElement, cloud: Pick<TutorialCloud, "body" | "cta">): void {
   const body = el.querySelector(".tutorial-extra-body, #tutorial-body");
-  if (body) body.textContent = cloud.body;
+  if (body) fillTutorialText(body, cloud.body);
   const cta = el.querySelector<HTMLElement>(".tutorial-cta");
   if (!cta) return;
   if (cloud.cta) {
@@ -3001,6 +3002,7 @@ $("export-text").addEventListener("click", async () => {
   await navigator.clipboard.writeText(toTextTracklist(setList));
   $("export-text").textContent = "Copied!";
   setTimeout(() => ($("export-text").textContent = "Copy tracklist"), 1200);
+  tutorialAdvanceIfTarget("export-text");
 });
 
 /** The row being dragged, by its index at the time the drag started. */
@@ -3040,7 +3042,7 @@ function renderSet(): void {
     li.innerHTML = `
       <span class="handle" aria-hidden="true">⠿</span>
       <div class="grow">
-        <div class="title">${esc(t.artist ?? "?")} — ${esc(t.name)}</div>
+        <div class="title-wrap"><span class="title">${esc(t.artist ?? "?")} — ${esc(t.name)}</span></div>
         <div class="meta muted">${t.key ? camelotDisplay(t.key) : "?"} · ${t.bpm ? Math.round(t.bpm) + " BPM" : "?"}${t.source?.bpm ? " · " + esc(t.source.bpm) : ""}</div>
         ${warnText ? `<div class="warnings">⚠ ${warnText}</div>` : ""}
       </div>
@@ -3052,12 +3054,26 @@ function renderSet(): void {
       if (clickTransportOn(t.pid)) stopPlayback();
       else void playTrack(t, "click");
     });
-    li.querySelector(".remove")!.addEventListener("click", () => {
+    li.querySelector(".remove")!.addEventListener("click", (e) => {
+      e.stopPropagation();
       setList.splice(i, 1);
       renderSet();
     });
 
+    // Same as a search hit: pulse the dot and pin the popover, camera stays put.
+    // A dragend can still fire click on some browsers, so that path is skipped.
+    let skipRowClick = false;
+    li.addEventListener("click", () => {
+      if (skipRowClick) {
+        skipRowClick = false;
+        return;
+      }
+      switchTab("map");
+      showTrackOnMap(t.pid);
+    });
+
     li.addEventListener("dragstart", (e) => {
+      skipRowClick = true;
       dragFrom = i;
       li.classList.add("dragging");
       // Firefox starts no drag at all without payload, and the move effect is
@@ -3100,6 +3116,12 @@ function renderSet(): void {
     });
 
     li.addEventListener("keydown", (e) => {
+      if (!e.altKey && (e.key === "Enter" || e.key === " ")) {
+        e.preventDefault();
+        switchTab("map");
+        showTrackOnMap(t.pid);
+        return;
+      }
       if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
       e.preventDefault();
       const to = i + (e.key === "ArrowUp" ? -1 : 1);
@@ -3122,6 +3144,25 @@ function renderSet(): void {
   drawSparkline();
   applyHighlight();
   renderPlayback();
+  syncSetTitleMarquees();
+}
+
+/** Scroll truncated set titles on hover; static ellipsis when they fit. */
+function syncSetTitleMarquees(): void {
+  for (const wrap of document.querySelectorAll<HTMLElement>("#set-list .title-wrap")) {
+    const span = wrap.querySelector<HTMLElement>(".title");
+    if (!span) continue;
+    wrap.classList.remove("marquee");
+    wrap.style.removeProperty("--marquee-distance");
+    wrap.style.removeProperty("--marquee-duration");
+    wrap.removeAttribute("title");
+    const overflow = span.scrollWidth - wrap.clientWidth;
+    if (overflow <= 1) continue;
+    wrap.classList.add("marquee");
+    wrap.title = span.textContent ?? "";
+    wrap.style.setProperty("--marquee-distance", `${overflow}px`);
+    wrap.style.setProperty("--marquee-duration", `${Math.max(3, overflow / 35 + 2.5)}s`);
+  }
 }
 
 /** Keep the moved row under the keyboard, since rendering replaced the element. */
