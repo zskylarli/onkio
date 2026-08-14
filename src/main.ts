@@ -2592,7 +2592,7 @@ function renderTrackPopover(): void {
         }
       </div>
       <div class="play-pair">
-        <button type="button" id="play-audio" title="Play" aria-label="Play">▶</button>
+        <button type="button" id="play-audio" title="${esc(audio.hint)}" aria-label="Play">▶</button>
       </div>
       <div class="actions-side right">
         <button id="add-to-set">Add to set</button>
