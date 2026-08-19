@@ -13,9 +13,10 @@ export type Neighbor = {
 };
 
 /**
- * Build the recommendation metric. Playlists are deliberately absent even when
- * callers pass a broader exclusion list: filing vocabularies do not transfer
- * between people's crates, so they cannot be evidence of musical similarity.
+ * Build the recommendation metric. Playlists and genre labels are absent even
+ * when callers pass a broader exclusion list: filing vocabularies do not
+ * transfer between people's crates, and genre is a coarse tag that collapses
+ * distinct records onto the same island.
  */
 export function buildSimilarityMatrix(
   tracks: Track[],
@@ -24,6 +25,7 @@ export function buildSimilarityMatrix(
 ): FeatureMatrix {
   const exclude = new Set<FeatureBlock>(options.exclude ?? []);
   exclude.add("playlists");
+  exclude.add("genre");
   return buildFeatureMatrix(tracks, playlists, {
     ...options,
     exclude: [...exclude],

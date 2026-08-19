@@ -172,6 +172,7 @@ describe("feature encoder", () => {
     // whole-row equality — and it is the matrix projection actually uses.
     const m = buildSimilarityMatrix(tracks, playlists, options);
     expect(m.encoder.widths.playlist).toBe(0);
+    expect(m.encoder.widths.genre).toBe(0);
     for (let r = 0; r < m.n; r++) {
       const encoded = encodeTrack(m.encoder, tracks[r]);
       expect([...encoded]).toEqual([...m.data.subarray(r * m.d, (r + 1) * m.d)]);
@@ -193,7 +194,7 @@ describe("feature encoder", () => {
     expect(encoded[nu + 7]).not.toBe(0);
   });
 
-  it("gives an unknown genre, label or tag zero weight rather than an error", () => {
+  it("gives an unknown label or tag zero weight rather than an error", () => {
     const m = buildSimilarityMatrix(tracks, playlists, options);
     const bare = mkTrack({ pid: "outsider", bpm: 124, key: "8A", year: 2021 });
     const exotic = {
@@ -206,8 +207,11 @@ describe("feature encoder", () => {
     const encodedExotic = encodeTrack(m.encoder, exotic);
     expect([...encodedExotic]).toEqual([...encodedBare]);
     expect(encodedExotic.every(Number.isFinite)).toBe(true);
-    // and a known genre does move it, so the test above is not vacuous
-    const known = encodeTrack(m.encoder, { ...bare, genre: "House" });
+    // Genre is not a similarity feature, so a known genre is also a no-op.
+    const knownGenre = encodeTrack(m.encoder, { ...bare, genre: "House" });
+    expect([...knownGenre]).toEqual([...encodedBare]);
+    // A known tag does move it, so the test above is not vacuous.
+    const known = encodeTrack(m.encoder, { ...bare, tags: ["club"] });
     expect([...known]).not.toEqual([...encodedBare]);
   });
 
@@ -399,5 +403,64 @@ describe("placing a track the map has never seen", () => {
     expect(Math.hypot(other.x - placement.x, other.y - placement.y)).toBeGreaterThan(
       0
     );
+  });
+
+  it("skips a library row so a re-placed track cannot sit on itself", () => {
+    const vectors = Float32Array.from([0, 0, 1, 0, 2, 0]);
+    const map = Float32Array.from([0, 0, 10, 0, 20, 0]);
+    const query = Float32Array.from([0, 0]);
+    const withSelf = placeVector(query, vectors, 2, map, 1)!;
+    expect(withSelf.neighbors[0].index).toBe(0);
+    expect(withSelf.x).toBe(0);
+    const skipped = placeVector(query, vectors, 2, map, 1, 1, 0)!;
+    expect(skipped.neighbors[0].index).toBe(1);
+    expect(skipped.x).toBe(10);
+  });
+
+  it("moves a library track when its BPM changes, without keeping it as a neighbour", () => {
+    const row = rest[0];
+    const retimed = encodeTrack(matrix.encoder, { ...row, bpm: (row.bpm ?? 120) * 1.5 });
+    expect([...retimed]).not.toEqual([
+      ...encodeTrack(matrix.encoder, row),
+    ]);
+    const moved = placeVector(
+      projectVector(retimed, reduced.basis, reduced.inputD, reduced.d),
+      reduced.data,
+      reduced.d,
+      coords,
+      PROJECTION_NEIGHBORS,
+      1,
+      0
+    )!;
+    expect(moved.neighbors.every((nb) => nb.index !== 0)).toBe(true);
+    expect(moved.x !== coords[0] || moved.y !== coords[1]).toBe(true);
+  });
+
+  it("places a tempo-only query among tracks of that tempo", () => {
+    const n = 6;
+    const d = 6;
+    const vectors = new Float32Array(n * d);
+    const map = new Float32Array(n * 2);
+    for (let i = 0; i < n; i++) {
+      const bpm = i < 3 ? 90 : 140;
+      const log = Math.log2(bpm);
+      vectors[i * d] = log;
+      vectors[i * d + 1] = Math.sin(2 * Math.PI * (log % 1));
+      vectors[i * d + 2] = Math.cos(2 * Math.PI * (log % 1));
+      map[i * 2] = i < 3 ? 0 : 10;
+      map[i * 2 + 1] = 0;
+    }
+    const queryAt = (bpm: number) => {
+      const log = Math.log2(bpm);
+      const q = new Float32Array(d);
+      q[0] = log;
+      q[1] = Math.sin(2 * Math.PI * (log % 1));
+      q[2] = Math.cos(2 * Math.PI * (log % 1));
+      return placeVector(q, vectors, d, map, 3)!;
+    };
+    expect(queryAt(90).x).toBeLessThan(2);
+    expect(queryAt(140).x).toBeGreaterThan(8);
+    expect(queryAt(90).neighbors.every((nb) => nb.index < 3)).toBe(true);
+    expect(queryAt(140).neighbors.every((nb) => nb.index >= 3)).toBe(true);
   });
 });

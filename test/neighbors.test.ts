@@ -110,6 +110,8 @@ describe("buildSimilarityMatrix", () => {
       { name: "Theirs", pids: ["same-music"] },
     ];
     const matrix = buildSimilarityMatrix(tracks, playlists);
+    expect(matrix.encoder.widths.playlist).toBe(0);
+    expect(matrix.encoder.widths.genre).toBe(0);
     const query = matrix.data.subarray(0, matrix.d);
     const same = matrix.data.subarray(matrix.d, matrix.d * 2);
 
@@ -125,9 +127,9 @@ describe("buildSimilarityMatrix", () => {
 
   it("keeps track rows aligned through reduction and follows feature weights", () => {
     const tracks = [
-      { ...track("query"), genre: "House", bpm: 124 },
-      { ...track("genre-match"), genre: "House", bpm: 145 },
-      { ...track("bpm-match"), genre: "Techno", bpm: 125 },
+      { ...track("query"), tags: ["club"], bpm: 124 },
+      { ...track("tag-match"), tags: ["club"], bpm: 145 },
+      { ...track("bpm-match"), tags: ["swing"], bpm: 125 },
     ];
     const nearestAt = (semanticWeight: number): string => {
       const matrix = buildSimilarityMatrix(tracks, [], { semanticWeight });
@@ -141,7 +143,7 @@ describe("buildSimilarityMatrix", () => {
       ).nearest("query", null, 1)[0].track.pid;
     };
 
-    expect(nearestAt(0.9)).toBe("genre-match");
+    expect(nearestAt(0.9)).toBe("tag-match");
     expect(nearestAt(0.1)).toBe("bpm-match");
   });
 });

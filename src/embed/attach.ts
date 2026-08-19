@@ -107,8 +107,9 @@ export function attachProjectedTrack(
  * Move one already-attached track to a refined position, leaving the rest of
  * the map exactly where it was.
  *
- * This is what a timbre vector arriving from audio analysis earns: the track
- * now has a feature nothing knew about when it was placed, so it is projected
+ * This is what a new measurement earns — a timbre vector from audio, or a BPM
+ * or key the user typed — without re-laying out everyone else. The track now
+ * has a feature nothing knew about when it was placed, so it is projected
  * again rather than embedded again. Returns null when the pid is not here,
  * which is the ordinary answer for a ghost that was never added.
  */

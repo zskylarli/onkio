@@ -737,6 +737,7 @@ main { grid-area: main; position: relative; overflow: hidden; }
 }
 .popover .play-pair button:hover { border-color: var(--accent); color: var(--accent); }
 .popover .actions-side button,
+.popover .actions-side a,
 .popover .actions > button {
   flex: 1;
   padding: 6px 8px;
@@ -746,10 +747,15 @@ main { grid-area: main; position: relative; overflow: hidden; }
   border-radius: 6px;
   cursor: pointer;
   font-size: 12px;
+  text-align: center;
+  text-decoration: none;
+  box-sizing: border-box;
 }
 .popover .actions-side button:hover,
+.popover .actions-side a:hover,
 .popover .actions > button:hover { border-color: var(--accent); color: var(--accent); }
-.popover .actions button.primary {
+.popover .actions button.primary,
+.popover .actions a.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--on-accent);

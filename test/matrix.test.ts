@@ -168,6 +168,13 @@ describe("buildFeatureMatrix", () => {
     expect(m.data.length).toBe(m.n * m.d);
   });
 
+  it("drops the genre block when asked", () => {
+    const withGenre = buildFeatureMatrix(tracks, playlists);
+    const without = buildFeatureMatrix(tracks, playlists, { exclude: ["genre"] });
+    expect(withGenre.d - without.d).toBe(3);
+    expect(without.encoder.widths.genre).toBe(0);
+  });
+
   it("zeroes the numeric block at full semantic weight (§5.3)", () => {
     const m = buildFeatureMatrix(tracks, playlists, { semanticWeight: 1 });
     const OFF_NU = m.d - 8;

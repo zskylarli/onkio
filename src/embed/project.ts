@@ -169,14 +169,19 @@ export function placeVector(
   d: number,
   coords: Float32Array,
   nNeighbors = PROJECTION_NEIGHBORS,
-  localConnectivity = 1
+  localConnectivity = 1,
+  skipIndex?: number
 ): Placement | null {
   const n = Math.floor(vectors.length / d);
   if (n === 0 || vector.length !== d || coords.length < n * 2) return null;
-  const k = Math.min(nNeighbors, n);
+  const skip =
+    skipIndex !== undefined && skipIndex >= 0 && skipIndex < n ? skipIndex : -1;
+  const k = Math.min(nNeighbors, skip >= 0 ? n - 1 : n);
+  if (k <= 0) return null;
 
   const nearest: { index: number; distance: number }[] = [];
   for (let index = 0; index < n; index++) {
+    if (index === skip) continue;
     let sum = 0;
     const base = index * d;
     for (let c = 0; c < d; c++) {

@@ -43,7 +43,8 @@ export type Track = {
   /**
    * Its position was projected onto an embedding it was not part of
    * (src/embed/project.ts), rather than fitted with everything else. Cleared
-   * when a later embedding run does include it.
+   * when a later embedding run does include it — except for a track whose BPM
+   * or key was typed by hand, which stays projected the way a search result is.
    */
   projected?: boolean;
 };

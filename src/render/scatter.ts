@@ -213,6 +213,15 @@ export class Scatter {
   private lassoScreen: Point[] = [];
   private lassoDrawing = false;
   private clickStart: Point | null = null;
+  /**
+   * Bumped in `setData`. The tracks layer's `data` is the library array, which
+   * is reused across embeddings, so deck will not rebuild positions unless an
+   * update trigger says the layout changed. Without that, a recalculated map
+   * keeps the old GPU positions while lasso tests the new coords.
+   */
+  private layoutGeneration = 0;
+  /** Extra trigger so an in-place coordinate write is visible to deck. */
+  private positionEpoch = 0;
   private cb: Callbacks;
 
   constructor(canvas: HTMLCanvasElement, cb: Callbacks = {}) {
@@ -437,6 +446,8 @@ export class Scatter {
    */
   setData(state: ScatterState, { keepView = false }: { keepView?: boolean } = {}): void {
     this.state = state;
+    this.layoutGeneration += 1;
+    this.positionEpoch += 1;
     // Row indices and world positions belong to the layout that just went away.
     this.hovered = null;
     this.discardLasso();
@@ -450,6 +461,22 @@ export class Scatter {
     this.bpmScaleFor = 0;
     this.measureData();
     if (!keepView) this.setViewState(this.fitted);
+    this.update();
+  }
+
+  /**
+   * Write one point's world coordinate into the buffer the layer is already
+   * drawing, then force deck to rebuild positions. The tracks layer's `data`
+   * is the Track[] (same objects), so replacing coords without a new position
+   * trigger leaves the GPU showing the old dots.
+   */
+  movePoint(index: number, x: number, y: number): void {
+    const s = this.state;
+    if (!s || index < 0 || index * 2 + 1 >= s.coords.length) return;
+    s.coords[index * 2] = x;
+    s.coords[index * 2 + 1] = y;
+    this.positionEpoch += 1;
+    this.layoutGeneration += 1;
     this.update();
   }
 
@@ -980,6 +1007,7 @@ export class Scatter {
         radiusScale: 2.4,
         pickable: true,
         updateTriggers: {
+          getPosition: [this.layoutGeneration, this.positionEpoch],
           getFillColor: [
             this.colorMode,
             this.theme,

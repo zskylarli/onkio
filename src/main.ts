@@ -18,6 +18,7 @@ import {
   reprojectAttachedTrack,
   type Embedding,
 } from "./embed/attach";
+import { placeByTempoKey } from "./embed/relocate";
 import { Scatter, type ColorMode, type Theme } from "./render/scatter";
 import { EnrichmentQueue } from "./enrich/queue";
 import { DspPool, type AudioSource } from "./dsp/pool";
@@ -72,6 +73,7 @@ import {
   toM3U8,
   toTextTracklist,
 } from "./views/setBuilder";
+import { beatportSearchUrl } from "./views/beatport";
 import { summarizeClusters, tasteReport } from "./views/taste";
 import { demoCollectionUrl, demoImportFile } from "./util/demo";
 import {
@@ -1381,6 +1383,9 @@ function runEmbedding(): void {
     timbreWeight: parseInt($<HTMLInputElement>("timbre-slider").value, 10) / 100,
     labelWeight: parseInt($<HTMLInputElement>("label-slider").value, 10) / 100,
     playlistWeight: parseInt($<HTMLInputElement>("playlist-slider").value, 10) / 100,
+    // Genre is a coarse filing tag: House vs Tech House collapses records that
+    // mix together and splits ones that do not. Record label stays; genre does not.
+    exclude: ["genre"] as const,
   };
   const matrix = buildFeatureMatrix(embeddingTracks, embeddingPlaylists, options);
   // Playlist names are personal filing vocabulary. They structure the map, but
@@ -1422,10 +1427,14 @@ function runEmbedding(): void {
       similarityBasis = msg.similarityBasis;
       similarityInputD = msg.similarityInputD;
       // Everything in this run was fitted with everything else, so a track that
-      // had been projected onto an older map is no longer an estimate. It stays
-      // marked as external, which is about where it came from rather than how
-      // it was placed.
-      for (const t of embeddingTracks) if (t.projected) t.projected = false;
+      // had been projected onto an older map is no longer an estimate — unless
+      // its BPM or key was typed by hand. Those stay projected the way a search
+      // result is: placed next to the closest owned tracks, not fitted. It
+      // stays marked as external either way, which is about where it came from
+      // rather than how it was placed.
+      for (const t of embeddingTracks) {
+        if (t.projected && !isManuallyPlaced(t)) t.projected = false;
+      }
       neighborIndex = new NeighborIndex(
         embeddingTracks,
         similarityVectors,
@@ -1481,12 +1490,18 @@ type ExternalPlacement = {
 };
 
 /**
- * Place a track the library has never seen onto the map that already exists,
- * without touching any state: encode it through the retained fit, project it
- * through the retained SVD basis, then take the UMAP-weighted mean of its
- * nearest neighbours' positions. Returns null until an embedding is ready.
+ * Place a track onto the map that already exists, without touching any state:
+ * encode it through the retained fit, project it through the retained SVD
+ * basis, then take the UMAP-weighted mean of its nearest neighbours' positions.
+ * `skipPid` is the library row not to sit on — a search result is not in the
+ * library, but a track whose BPM or key was just typed still is, and without
+ * the skip it would find itself as the nearest neighbour and not move.
+ * Returns null until an embedding is ready.
  */
-function placeExternalTrack(input: ExternalTrackInput): ExternalPlacement | null {
+function placeExternalTrack(
+  input: ExternalTrackInput,
+  skipPid?: string
+): ExternalPlacement | null {
   if (!library || !similarityEncoder || !similarityVectors || !coords) return null;
   const track: Track = {
     pid: "",
@@ -1498,12 +1513,15 @@ function placeExternalTrack(input: ExternalTrackInput): ExternalPlacement | null
   };
   const row = encodeTrack(similarityEncoder, track);
   const vector = projectVector(row, similarityBasis, similarityInputD, similarityD);
+  const skipIndex = skipPid ? pidToIndex.get(skipPid) : undefined;
   const placement = placeVector(
     vector,
     similarityVectors,
     similarityD,
     coords,
-    PROJECTION_NEIGHBORS
+    PROJECTION_NEIGHBORS,
+    1,
+    skipIndex
   );
   if (!placement) return null;
   const transferred = transferLabels(placement.neighbors, clusters, library.tracks);
@@ -1535,6 +1553,72 @@ function placeExternalTrack(input: ExternalTrackInput): ExternalPlacement | null
 
 function projectExternalTrack(input: ExternalTrackInput): ProjectedTrack | null {
   return placeExternalTrack(input)?.projection ?? null;
+}
+
+function isManuallyPlaced(track: Track): boolean {
+  return track.source?.bpm === "manual" || track.source?.key === "manual";
+}
+
+const lastManualPlacement = new Map<string, { bpm?: number; key?: string }>();
+
+function staleManualPlacement(track: Track): boolean {
+  const last = lastManualPlacement.get(track.pid);
+  return !last || last.bpm !== track.bpm || last.key !== track.key;
+}
+
+function setPlaceStatus(message: string): void {
+  const status = document.getElementById("embed-status");
+  if (status) status.textContent = message;
+}
+
+/**
+ * Slide one library track next to others with a similar tempo/key. Writes the
+ * new coordinate into the live coords buffer and asks the scatter to rebuild
+ * that one point — it does not re-fit the map.
+ */
+function reprojectLibraryTrack(
+  track: Track,
+  follow = true,
+  dims: { bpm: boolean; key: boolean } = { bpm: true, key: true }
+): boolean {
+  if (!library || !coords) {
+    setPlaceStatus("The map is still building, so there is nowhere to place it yet.");
+    return false;
+  }
+  const index = library.tracks.findIndex((row) => row.pid === track.pid);
+  if (index < 0) return false;
+  const placement = placeByTempoKey(track, library.tracks, coords, clusters, {
+    skipPid: track.pid,
+    bpm: dims.bpm,
+    key: dims.key,
+  });
+  if (!placement) {
+    setPlaceStatus(`Could not place ${track.name} from its BPM/key.`);
+    return false;
+  }
+  track.projected = true;
+  coords[index * 2] = placement.x;
+  coords[index * 2 + 1] = placement.y;
+  if (clusters) clusters[index] = placement.clusterId;
+  scatter?.movePoint(index, placement.x, placement.y);
+  lastManualPlacement.set(track.pid, { bpm: track.bpm, key: track.key });
+  if (follow) scatter?.focusOn(placement.x, placement.y);
+  if (follow && popoverTrack?.pid === track.pid) renderTrackPopover();
+  applyHighlight();
+  setPlaceStatus(`Placed ${track.name} next to similar BPM/key tracks`);
+  return true;
+}
+
+/**
+ * After a full fit, pull every hand-edited BPM/key off the UMAP layout and
+ * project it onto similar-tempo neighbours instead.
+ */
+function reprojectManualTracks(): void {
+  if (!library || !coords) return;
+  for (const track of library.tracks) {
+    if (!isManuallyPlaced(track)) continue;
+    reprojectLibraryTrack(track, false, { bpm: true, key: true });
+  }
 }
 
 // ---------- tracks from outside the library ----------
@@ -1728,8 +1812,7 @@ async function placeExternalCandidate(candidate: ExternalCandidate): Promise<boo
   externals.set(pid, { track, input, placement, added: false });
   externalNotice = "";
   syncGhosts();
-  scatter?.focusOn(placement.x, placement.y);
-  openTrackPopover(track);
+  showTrackOnMap(pid);
   // The preview is already in hand, and one decode is what turns an estimate
   // made from metadata into one that has heard the record.
   void analyzeExternalTrack(pid);
@@ -1813,10 +1896,11 @@ function reprojectExternalTrack(record: ExternalTrackRecord): void {
   applyHighlight();
 }
 
-/** An analysis pass touched a track; if it was a projected one, re-place it. */
+/** An analysis pass touched a track; if it was projected, re-place it. */
 function noteExternalAnalysis(track: Track): void {
   const record = externals.get(track.pid);
   if (record) reprojectExternalTrack(record);
+  else if (isManuallyPlaced(track)) reprojectLibraryTrack(track, false);
 }
 
 /**
@@ -1865,8 +1949,11 @@ function onEmbeddingReady(): void {
   scatter.setCollections(library.collections ?? []);
   scatter.setData({ tracks: library.tracks, coords, clusters });
   // A ghost's coordinate belongs to the layout it was projected onto, which
-  // this one has just replaced.
+  // this one has just replaced. Hand-edited BPM/key tracks are projected the
+  // same way, after the ghosts, so they sit on this layout rather than the
+  // UMAP coordinates the fit gave them.
   rebasePlacedTracks();
+  reprojectManualTracks();
   applyGapsVisibility();
   applyHighlight();
   fillHighlightItems();
@@ -2425,6 +2512,81 @@ window.addEventListener("resize", repositionPopovers);
 // ---------- track popover (detail + manual overrides, §4 stage 3) ----------
 
 let popoverTrack: Track | null = null;
+let overrideSaveTimer: number | undefined;
+
+function scheduleOverrideSave(track: Track): void {
+  window.clearTimeout(overrideSaveTimer);
+  overrideSaveTimer = window.setTimeout(() => commitTrackEdits(track), 400);
+}
+
+/**
+ * Persist BPM/key as they are typed. Incomplete keys are left alone until they
+ * parse (or the field is left); rewriting the popover would steal the caret.
+ */
+function overrideSourceBadges(track: Track): string {
+  const derived = (field: "bpm" | "key") => {
+    const src = track.source?.[field];
+    if (!src) return "";
+    const conf = track.confidence?.[field];
+    const confText = src === "manual" || conf === undefined
+      ? ""
+      : ` · ${Math.round(conf * 100)}% sure`;
+    return `<span class="badge">${field}: ${esc(src)}${confText}</span>`;
+  };
+  return `${derived("bpm")}${derived("key")}`;
+}
+
+function commitTrackEdits(
+  track: Track,
+  revertInvalidKey = false,
+  relocate = false
+): void {
+  window.clearTimeout(overrideSaveTimer);
+  const bpmInput = document.getElementById("ov-bpm") as HTMLInputElement | null;
+  const keyInput = document.getElementById("ov-key") as HTMLInputElement | null;
+  if (!bpmInput || !keyInput) return;
+
+  const bpmVal = parseFloat(bpmInput.value);
+  const keyRaw = keyInput.value.trim();
+  const keyVal = keyRaw ? toCamelot(keyRaw) : null;
+  if (revertInvalidKey && keyRaw && !keyVal) {
+    keyInput.value = track.key ?? "";
+  }
+
+  const o: { bpm?: number; key?: string } = {};
+  if (Number.isFinite(bpmVal) && bpmVal > 0 && bpmVal !== track.bpm) {
+    o.bpm = bpmVal;
+    track.bpm = bpmVal;
+    track.confidence = { ...track.confidence, bpm: 1 };
+    track.source = { ...track.source, bpm: "manual" };
+    track.bpmSuspect = false;
+  }
+  if (keyVal && keyVal !== track.key) {
+    o.key = keyVal;
+    track.key = keyVal;
+    track.confidence = { ...track.confidence, key: 1 };
+    track.source = { ...track.source, key: "manual" };
+  }
+  const changed = Object.keys(o).length > 0;
+  if (!changed && !relocate) return;
+
+  if (relocate && (changed || (isManuallyPlaced(track) && staleManualPlacement(track)))) {
+    const last = lastManualPlacement.get(track.pid);
+    reprojectLibraryTrack(track, true, {
+      bpm: "bpm" in o || last?.bpm !== track.bpm,
+      key: "key" in o || last?.key !== track.key,
+    });
+  }
+  if (changed) {
+    const badges = document.getElementById("ov-source");
+    if (badges) badges.innerHTML = overrideSourceBadges(track);
+    void putOverride(track.pid, o);
+    if (library) void saveLibrary(library);
+  }
+  scatter?.update();
+  renderLegend();
+  renderSet();
+}
 
 function openTrackPopover(track: Track): void {
   popoverTrack = track;
@@ -2436,6 +2598,9 @@ function openTrackPopover(track: Track): void {
 }
 
 function closeTrackPopover(): void {
+  window.clearTimeout(overrideSaveTimer);
+  const track = popoverTrack;
+  if (track) commitTrackEdits(track, true, true);
   popoverTrack = null;
   scatter?.setSelectedTrack(null);
   $("track-popover").hidden = true;
@@ -2541,16 +2706,6 @@ function renderTrackPopover(): void {
           hint: "No preview has been looked up for this track yet. This goes and looks, which can take a few seconds.",
         };
 
-  const derived = (field: "bpm" | "key") => {
-    const src = t.source?.[field];
-    if (!src) return "";
-    const conf = t.confidence?.[field];
-    const confText = src === "manual" || conf === undefined
-      ? ""
-      : ` · ${Math.round(conf * 100)}% sure`;
-    return `<span class="badge">${field}: ${esc(src)}${confText}</span>`;
-  };
-
   el.innerHTML = `
     <button class="close" title="Close">✕</button>
     <h3>${esc(t.name)}</h3>
@@ -2582,14 +2737,13 @@ function renderTrackPopover(): void {
              <span class="badge">${t.key ? camelotDisplay(t.key) : "key unknown"}</span>
            </div>`
     }
-    <div class="small">${derived("bpm")}${derived("key")}</div>
+    <div id="ov-source" class="small">${overrideSourceBadges(t)}</div>
     <div class="actions track-actions">
       <div class="actions-side">
-        ${inLibrary ? `<button id="ov-save" class="primary">Save edits</button>` : ""}
         ${
           record && !record.added
             ? `<button id="add-external" class="primary">Add to Searches</button>`
-            : ""
+            : `<a id="find-beatport" class="primary" href="${esc(beatportSearchUrl(t.artist, t.name))}" target="_blank" rel="noopener noreferrer">Find on Beatport</a>`
         }
       </div>
       <div class="play-pair">
@@ -2623,37 +2777,25 @@ function renderTrackPopover(): void {
     void addExternalTrack(t.pid);
   });
 
-  // Manual overrides are keyed on pid and applied at import, so they are only
-  // offered for a track the library actually holds.
-  el.querySelector("#ov-save")?.addEventListener("click", async () => {
-    const bpmVal = parseFloat($<HTMLInputElement>("ov-bpm").value);
-    const keyRaw = $<HTMLInputElement>("ov-key").value.trim();
-    const keyVal = keyRaw ? toCamelot(keyRaw) : null;
-    if (keyRaw && !keyVal) {
-      alert(`Couldn't read "${keyRaw}" as a key — try 8A, 1m or Am.`);
-      return;
+  const bpmInput = el.querySelector<HTMLInputElement>("#ov-bpm");
+  const keyInput = el.querySelector<HTMLInputElement>("#ov-key");
+  if (bpmInput && keyInput) {
+    bpmInput.addEventListener("input", () => scheduleOverrideSave(t));
+    keyInput.addEventListener("input", () => scheduleOverrideSave(t));
+    const commit = (revertInvalidKey = false) => commitTrackEdits(t, revertInvalidKey, true);
+    bpmInput.addEventListener("change", () => commit());
+    bpmInput.addEventListener("blur", () => commit());
+    keyInput.addEventListener("change", () => commit());
+    keyInput.addEventListener("blur", () => commit(true));
+    for (const input of [bpmInput, keyInput]) {
+      input.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        commit(input === keyInput);
+        input.blur();
+      });
     }
-    const o: { bpm?: number; key?: string } = {};
-    if (Number.isFinite(bpmVal) && bpmVal > 0) {
-      o.bpm = bpmVal;
-      t.bpm = bpmVal;
-      t.confidence = { ...t.confidence, bpm: 1 };
-      t.source = { ...t.source, bpm: "manual" };
-      t.bpmSuspect = false;
-    }
-    if (keyVal) {
-      o.key = keyVal;
-      t.key = keyVal;
-      t.confidence = { ...t.confidence, key: 1 };
-      t.source = { ...t.source, key: "manual" };
-    }
-    await putOverride(t.pid, o);
-    if (library) await saveLibrary(library);
-    renderTrackPopover();
-    scatter?.update();
-    renderLegend();
-    renderSet();
-  });
+  }
 
   $("add-to-set").addEventListener("click", () => appendToSet(t));
 
@@ -3435,7 +3577,8 @@ function applyHighlight(): void {
 function anchorHighlight(): HighlightRequest | null {
   if (!popoverTrack) return null;
   const record = externals.get(popoverTrack.pid);
-  if (!record || record.added) return null;
+  const isGhost = record && !record.added;
+  if (!isGhost && !popoverTrack.projected) return null;
   const pids = currentNeighbors(popoverTrack).map((neighbor) => neighbor.track.pid);
   if (pids.length === 0) return null;
   return {
@@ -3502,7 +3645,17 @@ searchResults.addEventListener("focusout", (event) => {
   if (searchResults.hidden) return;
   if (!searchHit(event.relatedTarget)) scatter?.setExternalHover(null);
 });
+searchResults.addEventListener("pointerdown", (event) => {
+  // The list hangs over the canvas. A pointer that reaches deck would pan or
+  // zoom the map instead of choosing a result.
+  event.stopPropagation();
+});
+searchResults.addEventListener("dblclick", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+});
 searchResults.addEventListener("click", (event) => {
+  event.stopPropagation();
   const target = event.target;
   if (target instanceof Element && target.closest("[data-external-search]")) {
     void runExternalSearch();
@@ -3518,7 +3671,7 @@ searchResults.addEventListener("click", (event) => {
   const pid = hit.dataset.pid;
   if (!pid) return;
   showTrackOnMap(pid);
-  dismissSearchResults();
+  requestAnimationFrame(() => dismissSearchResults());
 });
 
 function runSearch(): void {
@@ -3599,7 +3752,7 @@ async function chooseExternal(index: number): Promise<void> {
   if (!candidate) return;
   if (candidate.localPid) {
     showTrackOnMap(candidate.localPid);
-    dismissSearchResults();
+    requestAnimationFrame(() => dismissSearchResults());
     return;
   }
   dismissSearchResults();
@@ -3798,6 +3951,10 @@ Object.assign(window, {
     setColorMode,
     focusTrack,
     projectTrack: projectExternalTrack,
+    relocateEdited: (pid: string) => {
+      const track = trackByPid(pid);
+      return track ? reprojectLibraryTrack(track) : false;
+    },
     getNeighbors: (
       pid: string,
       targetCollection: string | null = neighborCollection,
